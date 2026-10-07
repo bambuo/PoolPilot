@@ -370,7 +370,8 @@ WS 限制：连接数 255/IP，订阅 500/连接、5000/IP，唯一账户 500/�
 - API key 的注册需要一次 **L1 钱包签名**（`ChangePubKey`）；注册后下单不再需要 L1 私钥。
 - **官方签名器只有三种形态**：编译自 Go 的 WASM、C 动态库（`.so/.dylib/.dll`）、Python SDK。
   **没有纯 .NET / 纯 JS 实现。**
-- 因此本系统不下单。未来若接入，路径是 P/Invoke 调用 Go 编译出的 C 动态库，且只实现 `IBroker` 抽象。
+- 因此**Lighter 侧不下单**：执行落在有签名能力的场所（币安 U 本位，见 docs/EXCHANGES.md）。
+  将来若要直接交易 Lighter，路径是 P/Invoke 调用 Go 编译出的 C 动态库，且只实现 `IExchangeBroker` 抽象。
 
 ### 7.2 历史成交流水需要付费解锁
 
