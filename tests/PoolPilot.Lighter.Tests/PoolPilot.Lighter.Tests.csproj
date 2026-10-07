@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    对 Lighter 公开接口的**契约测试**。
+    全部标记 [TestCategory("Live")]，日常门禁通过过滤器排除（写法见 README）。
+
+    存在理由：本项目的所有领域结论都建立在实测之上，上游改一个字段单位就会
+    让全部计算失效，必须有一层"上游变了立刻知道"的防线。
+  -->
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PoolPilot.Infrastructure\PoolPilot.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+  </ItemGroup>
+
+</Project>

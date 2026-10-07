@@ -1,0 +1,49 @@
+<Project>
+
+  <!--
+    集中包版本管理（Central Package Management）。
+    Microsoft.* 一律锁 10.0.10 —— 与本机已安装的 ASP.NET Core 10.0.10 runtime 对齐，
+    避免引用高于 runtime 的补丁版本导致还原后无法运行。
+
+    刻意不引入 Microsoft.EntityFrameworkCore.Design / dotnet-ef：
+    本机 dotnet-ef 需额外的 net8 runtime 才能工作，而本项目用 EnsureCreated 建库，
+    不需要迁移工具链。
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- 允许只声明 PackageVersion 就钉住传递依赖的版本（安全修复用） -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 测试 -->
+    <PackageVersion Include="MSTest" Version="4.4.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
+
+    <!-- 基础设施 -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.10" />
+
+    <!-- 表现层：OpenAPI 描述，供 web 工作台生成类型化客户端 -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+
+    <!--
+      安全修复：EF Core Sqlite 间接引入的 SQLitePCLRaw.lib.e_sqlite3 2.1.11
+      存在高危漏洞（GHSA-2m69-gcr7-jv3q，受影响范围 <= 2.1.11）。
+      通告的 first_patched_version 为空，但 2.1.12+ 已在范围之外，故钉到 2.1.13。
+    -->
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.13" />
+
+    <!--
+      安全修复：Microsoft.AspNetCore.OpenApi 间接引入的 Microsoft.OpenApi 2.0.0
+      存在高危漏洞（GHSA-v5pm-xwqc-g5wc，2.x 线受影响范围 <= 2.7.4，首个修复版 2.7.5）。
+      刻意留在 2.x 线而不跳 3.x —— 大版本跨越会破坏 AspNetCore.OpenApi 的兼容性。
+      以上两者均为**传递依赖钉版**，不是直接引用，删除会让漏洞回归。
+    -->
+    <PackageVersion Include="Microsoft.OpenApi" Version="2.7.6" />
+  </ItemGroup>
+
+</Project>

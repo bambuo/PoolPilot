@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 应用层：只引用 Domain。用例编排 + DTO + 映射。不依赖 EF / HTTP 实现。 -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\PoolPilot.Domain\PoolPilot.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

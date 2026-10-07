@@ -1,0 +1,39 @@
+<Project>
+
+  <!--
+    全解决方案共享的构建属性。
+    规范依据：docs/CODING_STANDARDS.md 第 3 节（C# 语言规范）。
+
+    注意：本机 dotnet 位于 ~/.dotnet，且**不得安装任何 runtime**
+    （安装 runtime 会覆盖 muxer，导致全线进程 137 / Jetsam bug_type 309）。
+    构建与测试一律加 -m:1 防止 Jetsam：
+      dotnet build -m:1
+      dotnet test  -m:1
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!--
+      CA1848 / CA1873：建议改用 LoggerMessage 源生成器，以避免参数装箱与字符串插值的开销。
+
+      本项目的日志全部位于**非热路径**：监控事件由池的持仓变化驱动，而实测池的活动率
+      只有市场成交的约 0.24%（每小时数次）。这个量级下日志开销可忽略，
+      而改用源生成器需要引入 partial 类与 [LoggerMessage] 特性仪式，代价大于收益。
+
+      ⚠ 若将来日志进入高频路径（例如逐笔成交循环内），必须重新评估本豁免。
+    -->
+    <NoWarn>$(NoWarn);CA1848;CA1873</NoWarn>
+  </PropertyGroup>
+
+</Project>

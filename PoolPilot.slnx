@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PoolPilot.Api/PoolPilot.Api.csproj" />
+    <Project Path="src/PoolPilot.Application/PoolPilot.Application.csproj" />
+    <Project Path="src/PoolPilot.Domain/PoolPilot.Domain.csproj" />
+    <Project Path="src/PoolPilot.Infrastructure/PoolPilot.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PoolPilot.Api.Tests/PoolPilot.Api.Tests.csproj" />
+    <Project Path="tests/PoolPilot.Application.Tests/PoolPilot.Application.Tests.csproj" />
+    <Project Path="tests/PoolPilot.Domain.Tests/PoolPilot.Domain.Tests.csproj" />
+    <Project Path="tests/PoolPilot.Lighter.Tests/PoolPilot.Lighter.Tests.csproj" />
+  </Folder>
+</Solution>

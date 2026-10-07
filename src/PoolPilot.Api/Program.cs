@@ -1,0 +1,174 @@
+using Microsoft.EntityFrameworkCore;
+
+using PoolPilot.Api.Hubs;
+using PoolPilot.Api.Middleware;
+using PoolPilot.Application.Abstractions;
+using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
+using PoolPilot.Domain.Repositories;
+using PoolPilot.Infrastructure.Lighter;
+using PoolPilot.Infrastructure.Brokers;
+using PoolPilot.Infrastructure.Monitoring;
+using PoolPilot.Infrastructure.Persistence;
+
+namespace PoolPilot.Api;
+
+/// <summary>
+/// 组合根。分层依赖只在这里汇合：Api 引用 Application + Infrastructure。
+/// 业务逻辑一律不写在本题——Api 层是薄壳（docs/CODING_STANDARDS.md 1.2）。
+/// </summary>
+public sealed class Program
+{
+    private Program()
+    {
+    }
+
+    public static void Main(string[] args)
+    {
+        WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+
+        builder.Services.AddControllers();
+        builder.Services.AddOpenApi();
+        builder.Services.AddSignalR();
+
+        // ── 持久化 ──────────────────────────────────────────────
+        // 只存无法重新获取的东西：监控到的事件流与跟单对照记录。
+        // 池元数据、净值、快照都能随时从上游重拉，不落库。
+        string dbPath = Path.Combine(
+            builder.Environment.ContentRootPath,
+            "..",
+            "..",
+            "data",
+            "poolpilot.db");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(dbPath))!);
+
+        builder.Services.AddDbContext<PoolPilotDbContext>(options =>
+            options.UseSqlite($"Data Source={Path.GetFullPath(dbPath)}"));
+
+        builder.Services.AddScoped<IPoolEventRepository, PoolEventRepository>();
+        builder.Services.AddScoped<ICopyFillRepository, CopyFillRepository>();
+        builder.Services.AddScoped<ILeadTraderRepository, LeadTraderRepository>();
+        builder.Services.AddScoped<IExchangeConfigRepository, ExchangeConfigRepository>();
+        builder.Services.AddScoped<ISymbolMappingRepository, SymbolMappingRepository>();
+        builder.Services.AddScoped<IFollowerRepository, FollowerRepository>();
+        builder.Services.AddScoped<IFollowerLedgerRepository, FollowerLedgerRepository>();
+        builder.Services.AddScoped<ILiveOrderRepository, LiveOrderRepository>();
+
+        // ── Lighter 客户端 ───────────────────────────────────────
+        builder.Services.AddSingleton<LighterWebSocketClient>();
+
+        builder.Services.AddHttpClient<LighterPoolsClient>(http =>
+        {
+            http.BaseAddress = new Uri($"{LighterConstants.MainnetRestBaseUrl}/");
+            http.Timeout = TimeSpan.FromSeconds(60);
+        });
+
+        builder.Services.AddScoped<ILighterPoolsClient>(sp => sp.GetRequiredService<LighterPoolsClient>());
+
+        // ── 用例 ────────────────────────────────────────────────
+        builder.Services.AddScoped<GetPoolListUseCase>();
+        builder.Services.AddScoped<GetPoolDetailUseCase>();
+        builder.Services.AddScoped<EvaluateSizeFeasibilityUseCase>();
+        builder.Services.AddScoped<RunBacktestUseCase>();
+        builder.Services.AddScoped<GetCopyLedgerUseCase>();
+
+        // 带单员（被观察的池）与跟单员（订阅者）是两组用例：
+        // 前者的生命周期与有没有人跟无关，后者来去都不影响前者。
+        builder.Services.AddScoped<EnsureLeadTraderUseCase>();
+        builder.Services.AddScoped<ListLeadTradersUseCase>();
+        builder.Services.AddScoped<ConfigureLeadTraderUseCase>();
+        builder.Services.AddScoped<CreateFollowerUseCase>();
+        builder.Services.AddScoped<GetFollowerUseCase>();
+        builder.Services.AddScoped<ListFollowersUseCase>();
+        builder.Services.AddScoped<UpdateFollowerUseCase>();
+        builder.Services.AddScoped<DeleteFollowerUseCase>();
+
+        // 交易所配置与凭据。凭据按原样保存（明文）——加密那一套已移除，
+        // 理由见 ExchangeConfig：密钥与密文同库等于没防，而"看起来加密了"比明文更误导
+        builder.Services.AddScoped<ListExchangesUseCase>();
+        builder.Services.AddScoped<CreateExchangeUseCase>();
+        builder.Services.AddScoped<UpdateExchangeUseCase>();
+        builder.Services.AddScoped<DeleteExchangeUseCase>();
+
+        // ── 实盘执行侧 ──────────────────────────────────────────
+        // 目前只有币安 U 本位合约。上限由配置给出（LiveTrading 节），
+        // 直接注册实例而不是 IOptions：应用层零包依赖，绑定的活留给组合根
+        builder.Services.AddHttpClient(nameof(ExchangeBrokerFactory));
+        builder.Services.AddSingleton<IExchangeBrokerFactory, ExchangeBrokerFactory>();
+        builder.Services.AddSingleton(
+            builder.Configuration.GetSection("LiveTrading").Get<LiveTradingLimits>() ?? new LiveTradingLimits());
+        builder.Services.AddScoped<ProbeExchangeUseCase>();
+        builder.Services.AddScoped<PlanLiveOrderUseCase>();
+        builder.Services.AddScoped<MapPoolMarketsUseCase>();
+        builder.Services.AddScoped<LiveTargetResolver>();
+        builder.Services.AddScoped<GetLiveOrdersUseCase>();
+        builder.Services.AddScoped<GetLiveAccountUseCase>();
+        builder.Services.AddScoped<CloseLivePositionUseCase>();
+
+        // 实盘账号的用户数据流：交易所主动推"仓位变了"，界面据此实时刷新。
+        // 单例（连接是长生命周期的），按**账号**一条——listenKey 挂在 API key 上，
+        // 同一账号下的多个跟单员共用一条流
+        builder.Services.AddHttpClient(nameof(BinanceAccountFeed));
+        builder.Services.AddSingleton<AccountStreamRegistry>();
+
+        // 标的映射表：扫描整理 + 热路径上的本地查询
+        builder.Services.AddScoped<ListSymbolMappingsUseCase>();
+        builder.Services.AddScoped<ScanSymbolMappingsUseCase>();
+        builder.Services.AddScoped<SaveSymbolMappingUseCase>();
+        builder.Services.AddScoped<DeleteSymbolMappingUseCase>();
+
+        // 合约目录**按配置造**（工厂），不注册成单例：同一平台的主网与测试网是两套清单，
+        // 注入单例会让"选中 OKX/测试网配置"时拿到币安主网的合约
+        builder.Services.AddHttpClient(nameof(ExchangeSymbolCatalogFactory));
+        builder.Services.AddSingleton<IExchangeSymbolCatalogFactory, ExchangeSymbolCatalogFactory>();
+
+        // ── 监控 ────────────────────────────────────────────────
+        // 被观察的池由**带单员表**决定（见 LeadTraderRegistry）；配置里的名单只在首次运行时播种，
+        // 之后库里说了算。跟单员的存在与否不参与"订阅哪些池"这个决定。
+        builder.Services.Configure<LeadTraderOptions>(builder.Configuration.GetSection("LeadTraders"));
+
+        builder.Services.AddSingleton<IMonitorBroadcaster, SignalRMonitorBroadcaster>();
+        builder.Services.AddSingleton<MarketDataCache>();
+        builder.Services.AddSingleton<IMarkPrices, MarkPriceProvider>();
+        builder.Services.AddSingleton<LeadTraderRegistry>();
+        builder.Services.AddSingleton<ILeadWatchState>(sp => sp.GetRequiredService<LeadTraderRegistry>());
+
+        // 配置写完立刻同步运行期（否则页面会有一段"已启用但未连接"的空窗）
+        builder.Services.AddSingleton<ILeadTraderSync>(sp => sp.GetRequiredService<LeadTraderRegistry>());
+        builder.Services.AddSingleton<CopySlippageRecorder>();
+        builder.Services.AddHostedService<LeadTraderHostedService>();
+
+        WebApplication app = builder.Build();
+
+        // 建库/补表：见 DatabaseSchemaInitializer 的说明。刻意不用迁移工具链
+        // （本机 dotnet-ef 需额外的 net8 runtime，见 AGENTS.md 铁律 8），
+        // 但也不能只靠 EnsureCreated——它对已存在的库什么都不做，模型新增表永远建不出来。
+        using (IServiceScope scope = app.Services.CreateScope())
+        {
+            PoolPilotDbContext db = scope.ServiceProvider.GetRequiredService<PoolPilotDbContext>();
+            ILogger<Program> startupLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            DatabaseSchemaInitializer.EnsureSchemaAsync(db, startupLogger).GetAwaiter().GetResult();
+        }
+
+        app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+        if (app.Environment.IsDevelopment())
+        {
+            app.MapOpenApi();
+        }
+
+        app.MapControllers();
+        app.MapHub<MonitorHub>("/hubs/monitor");
+
+        // 健康检查：供前端确认后端已就绪
+        app.MapGet("/api/health", () => Results.Ok(new
+        {
+            status = "ok",
+            service = "PoolPilot",
+            upstream = LighterConstants.MainnetRestBaseUrl,
+        }));
+
+        app.Run();
+    }
+}

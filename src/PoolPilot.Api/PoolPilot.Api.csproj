@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- 表现层：MVC Controllers（薄壳）+ SignalR Hub + 异常中间件 + DI 组合根。 -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\PoolPilot.Application\PoolPilot.Application.csproj" />
+    <ProjectReference Include="..\PoolPilot.Infrastructure\PoolPilot.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+
+</Project>

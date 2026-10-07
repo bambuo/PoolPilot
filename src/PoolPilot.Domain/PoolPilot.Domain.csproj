@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    领域层：**零外部依赖**（不引用任何 NuGet 包，不用 EF Core / ASP.NET Core 类型）。
+    规范依据：docs/CODING_STANDARDS.md 1.1。
+
+    本层的核心价值：把 Lighter API 实测到的全部字段陷阱（单位、刻度、时间口径、
+    死字段）固化成类型约束与断言，而不是散落在注释里。
+  -->
+
+</Project>

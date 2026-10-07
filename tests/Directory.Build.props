@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- 继承解决方案根目录的构建属性 -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!--
+      豁免 CA1707（成员名不得含下划线）。
+
+      docs/CODING_STANDARDS.md 第 4 节规定测试方法命名为
+      Method_Scenario_ExpectedBehavior（如 Parse_WithMicrosecondTimestamp_ReturnsUtcInstant），
+      该约定本身依赖下划线，与 CA1707 直接冲突。生产代码不豁免此规则——本豁免仅限测试项目。
+    -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+</Project>

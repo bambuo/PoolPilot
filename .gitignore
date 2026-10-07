@@ -1,0 +1,31 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+
+# 前端
+node_modules/
+web/dist/
+web/.vite/
+web/node_modules/.tmp/
+
+# 本地数据（SQLite 库文件、备份、WAL 由运行时生成）
+#
+# 这三条是仓库里**最要紧**的忽略规则：交易所 API 凭据是明文存在库里的
+# （加密那套已被明确移除），所以库文件与它的任何副本——包括手写的 .bak——
+# 都绝不能进版本库。*.db.* 同时盖住 -wal/-shm 与 .bak-* 两类。
+data/*.db
+data/*.db.*
+
+# 采集到的原始载荷与快照（体积大，可重新拉取）
+data/cache/
+
+# 将来的密钥材料：绝不进仓库
+*.key
+secrets*.json
+
+# 工具与系统
+.DS_Store
+.vs/
+.idea/

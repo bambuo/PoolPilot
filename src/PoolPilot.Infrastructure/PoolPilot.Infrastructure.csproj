@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    基础设施层：Lighter REST / WebSocket 客户端、EF Core 持久化、常驻监控服务。
+    只做技术实现，不含业务决策。
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\PoolPilot.Domain\PoolPilot.Domain.csproj" />
+    <ProjectReference Include="..\PoolPilot.Application\PoolPilot.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 解析器（LighterEntityParser）是 internal：它是全部实测陷阱的落点，
+         契约测试项目需要直接锁它的行为，而不是只从公开客户端间接触达。 -->
+    <InternalsVisibleTo Include="PoolPilot.Lighter.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,27 @@
+{
+  "name": "poolpilot-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "PoolPilot 工作台前端：Lighter 资金池的观察、分析与纸面跟单",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc -b --force"
+  },
+  "dependencies": {
+    "@arco-design/web-vue": "^2.58.0",
+    "@microsoft/signalr": "^10.0.11",
+    "vue": "^3.5.40",
+    "vue-router": "^5.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/tsconfig": "^0.9.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "vue-tsc": "^3.3.8"
+  }
+}
