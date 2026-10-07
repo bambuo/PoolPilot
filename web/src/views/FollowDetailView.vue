@@ -506,11 +506,19 @@ const capitalMax = computed(() =>
 /// 输入框的上下限。**没有上限时不能传 `max: undefined`**：本项目的
 /// `exactOptionalPropertyTypes` 会把"显式 undefined"与"这个键不存在"当成两回事，
 /// 所以按需拼出这个对象，而不是写 `:max="capitalMax ?? undefined"`
-const capitalInputLimits = computed(() =>
-  capitalMax.value === null
+///
+/// 上限**低于当前本金时不挂 max**：Arco 的输入框会把显示值收敛到上限——
+/// "当前本金 50、账号可用保证金 0"会被显示成 0，与同一页概览里的「规模基准 $50.00」
+/// 自相矛盾；更糟的是顺手点一下「重设本金并继续」就会把这个假的 0 真写进库里。
+/// 这一档改由提交前那道带数字的校验拦住（后端也是同一条规则）。
+const capitalInputLimits = computed(() => {
+  const max = capitalMax.value
+  const current = follower.value?.initialCapital ?? 0
+
+  return max === null || max < current
     ? { min: 1, step: 500 }
-    : { min: 1, step: 500, max: capitalMax.value },
-)
+    : { min: 1, step: 500, max }
+})
 
 function requestConfigure(isActive: boolean): void {
   // 空本金不能提交：后端会回一句框架级的参数错误，而这里能直接说清
