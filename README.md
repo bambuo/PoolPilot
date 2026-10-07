@@ -120,27 +120,35 @@ web/                         Vue 工作台
 docs/                        编码规范、接口实测笔记、角色关系、凭据与账务口径；docs/images/ 为界面截图
 ```
 
-## 环境要求与命令
+## 环境要求
 
-dotnet 位于 `~/.dotnet`，SDK 需 .NET 10。
+| 需要 | 版本 | 用途 |
+|---|---|---|
+| [.NET SDK](https://dotnet.microsoft.com/download) | 10.0.3xx 或更高特性带（`global.json` 固定 10.0.302，允许向上滚动） | 后端与测试；SDK 自带 ASP.NET Core runtime |
+| [Node.js](https://nodejs.org/) | 20.19+ 或 22.12+（Vite 8 的要求） | 前端构建与开发服务器 |
+| npm | 随 Node 附带 | 前端依赖 |
+
+目标框架 `net10.0`（C# 14）。**不需要数据库服务**：持久化用 SQLite，库文件由运行时在 `data/` 下创建。
+运行期需要网络：池数据来自 Lighter 的公共 API；启用实盘时还会访问所选交易所的接口。
+
+## 运行
 
 ```bash
-# 构建与测试（一律加 -m:1，本机需要防 Jetsam）
-dotnet build -m:1
-dotnet test  -m:1
-
-# 日常门禁：排除需要联网的契约测试
-dotnet test -m:1 --filter "TestCategory!=Live"
-
-# 后端（默认 http://localhost:5274）
+# 后端 → http://localhost:5274
 dotnet run --project src/PoolPilot.Api
 
-# 前端（默认 http://localhost:5273，已配置 /api 与 /hubs 反代到 5274）
-cd web && npm install && npm run dev
+# 前端 → http://localhost:5273（已配置 /api 与 /hubs 反代到 5274）
+cd web
+npm install
+npm run dev
 ```
 
-> ⚠ **不要安装任何 .NET runtime**：安装 runtime 会覆盖 muxer，导致全线进程以 137 退出
-> （Jetsam `bug_type 309`）。本机已有 SDK 10.0.302 与 ASP.NET Core 10.0.10 runtime。
+## 测试
+
+```bash
+dotnet test                                # 全部
+dotnet test --filter "TestCategory!=Live"  # 跳过需要联网的契约测试
+```
 
 ## 文档
 
