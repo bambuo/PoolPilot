@@ -74,7 +74,9 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
     takerFeePercent: 0,
     secretLabel: '签名私钥',
     needsPassphrase: false,
-    credentialHint: '本项目的池数据全部来自 Lighter；Standard 档实测挂单与吃单费率均为 0。',
+    credentialHint:
+      'Lighter 的 API Key 要在官网用 L1 钱包签名注册。本项目当前只读它的公开数据'
+      + '（Lighter 侧不下单），这把 key 暂时没有消费方。',
   },
   {
     code: 'binance',
@@ -134,6 +136,37 @@ export const EXCHANGE_KIND_LABELS: Readonly<Record<ExchangeKind, string>> = {
   dex: '去中心化',
 }
 
+/// 形态的胶囊标签：卡面上用大写缩写。
+///
+/// 与 <see cref="EXCHANGE_KIND_LABELS"/> 分工不同——中文全称用在配置卡片上（那里有宽度），
+/// 缩写用在"选择平台"的选择卡片与详情头部（那里要与平台名挤在一行）。
+export const EXCHANGE_KIND_BADGES: Readonly<Record<ExchangeKind, string>> = {
+  cex: 'CEX',
+  dex: 'DEX',
+}
+
+/// 选择平台那一步的一个分组。
+export interface ExchangePresetGroup {
+  readonly kind: ExchangeKind
+  readonly title: string
+  readonly presets: readonly ExchangePreset[]
+}
+
+/// 选择平台那一步的分组。**顺序固定：中心化在前**——执行侧目前落在币安，
+/// 使用者多半先在这里找它；组内保持 <see cref="EXCHANGE_PRESETS"/> 的顺序。
+export const EXCHANGE_PRESET_GROUPS: readonly ExchangePresetGroup[] = [
+  {
+    kind: 'cex',
+    title: '中心化交易所 (CEX)',
+    presets: EXCHANGE_PRESETS.filter((p) => p.kind === 'cex'),
+  },
+  {
+    kind: 'dex',
+    title: '去中心化交易所 (DEX)',
+    presets: EXCHANGE_PRESETS.filter((p) => p.kind === 'dex'),
+  },
+]
+
 export function presetOf(code: string): ExchangePreset {
   return EXCHANGE_PRESETS.find((p) => p.code === code) ?? CustomPreset
 }
@@ -144,4 +177,8 @@ export function codeLabel(code: string): string {
 
 export function kindLabel(kind: string): string {
   return EXCHANGE_KIND_LABELS[kind as ExchangeKind] ?? kind
+}
+
+export function kindBadge(kind: string): string {
+  return EXCHANGE_KIND_BADGES[kind as ExchangeKind] ?? kind
 }

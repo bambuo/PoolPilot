@@ -684,6 +684,9 @@ export interface FollowerSummary {
   mode: string
   /** 实盘所在的交易所账号名；纸面为 null。 */
   exchangeName: string | null
+  /** 实盘所用的交易所配置 Id；纸面为 null。「交易所」页靠它回答"这条配置有没有人在用"——
+   *  不按名字关联：名字由使用者起，后端不保证唯一。 */
+  exchangeConfigId: number | null
   /** 实盘的可用保证金（交易所给的）；纸面为 null。 */
   availableBalance: number | null
   /** 实盘账户当前持有的仓位（交易所给的）；纸面跟单员为空。 */

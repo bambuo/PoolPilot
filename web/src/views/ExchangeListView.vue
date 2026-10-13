@@ -1,16 +1,17 @@
 <script setup lang="ts">
+import { Message } from '@arco-design/web-vue'
 import { computed, onMounted, ref, watch } from 'vue'
 
-import { api, type ExchangeConfigRow } from '@/api/client'
+import { api, type ExchangeConfigRow, type FollowerSummary } from '@/api/client'
 import {
-  EXCHANGE_PRESETS,
+  EXCHANGE_PRESET_GROUPS,
   codeLabel,
-  kindLabel,
+  kindBadge,
   presetOf,
   type ExchangeCode,
   type ExchangeKind,
 } from '@/domain/exchanges'
-import { formatDateTime, formatNumber } from '@/utils/format'
+import { formatDateTime } from '@/utils/format'
 
 /// 交易所 —— 各平台的连接配置与凭据。
 ///
@@ -24,6 +25,14 @@ import { formatDateTime, formatNumber } from '@/utils/format'
 ///   <item>**读取只回尾号**：界面没有"查看凭据"入口。那是减少屏幕上的暴露面，与存储方式无关。</item>
 /// </list>
 const exchanges = ref<ExchangeConfigRow[]>([])
+
+/// 实盘跟单员：用来回答"这条配置现在有没有人在用"。
+///
+/// 单列一个 ref 而不是和交易所一起 Promise.all：**取不到它不该让整页崩掉**——
+/// 这页的主角是配置本身。取不到时界面写"这次没取到"，而不是"没有人在用"（那是两件事）。
+const liveFollowers = ref<FollowerSummary[]>([])
+const followersFailed = ref(false)
+
 const loading = ref(false)
 const errorMessage = ref('')
 const saving = ref(false)
@@ -48,20 +57,48 @@ const step = ref<1 | 2>(1)
 /// 永远判错——表现为换平台之后接口地址没跟着换（实测踩到过：切到 OKX 仍留着币安的地址）。
 const lastPresetCode = ref<ExchangeCode>('binance')
 
-const form = ref({
-  code: 'binance',
-  kind: 'cex' as ExchangeKind,
-  displayName: '',
-  isTestnet: false,
-  restBaseUrl: '',
-  wsUrl: '',
-  makerFeePercent: 0.02,
-  takerFeePercent: 0.05,
-  notes: '',
-  apiKey: '',
-  apiSecret: '',
-  passphrase: '',
-})
+/// 表单的形状。写成具名接口而不是内联字面量：初值来自 <see cref="freshForm"/>，
+/// 编辑时整体替换，两处必须长得一样。
+interface ExchangeForm {
+  code: string
+  kind: ExchangeKind
+  displayName: string
+  isTestnet: boolean
+  restBaseUrl: string
+  wsUrl: string
+  makerFeePercent: number
+  takerFeePercent: number
+  notes: string
+  apiKey: string
+  apiSecret: string
+  passphrase: string
+}
+
+/// 一张全新的表单：平台预设的地址与费率，空的名称、备注与凭据。
+///
+/// 每次「新建」都从它重来一遍，而不是在上一次的表单上改几个字段——
+/// 上一次新建中途关掉时留在表单里的密钥会跟着下一条配置一起被保存，
+/// 而界面上看不出那把 key 是旧的、更看不出它是为别的平台填的。
+function freshForm(code: ExchangeCode): ExchangeForm {
+  const preset = presetOf(code)
+
+  return {
+    code,
+    kind: preset.kind,
+    displayName: '',
+    isTestnet: false,
+    restBaseUrl: preset.restBaseUrl,
+    wsUrl: preset.wsUrl,
+    makerFeePercent: preset.makerFeePercent,
+    takerFeePercent: preset.takerFeePercent,
+    notes: '',
+    apiKey: '',
+    apiSecret: '',
+    passphrase: '',
+  }
+}
+
+const form = ref<ExchangeForm>(freshForm('binance'))
 
 /// 凭据字段是否要显示。已有凭据时默认折叠——避免"打开编辑框看到两个空字段，
 /// 以为凭据丢了"，也避免误提交空值把凭据清掉。
@@ -75,21 +112,61 @@ const editingRow = computed(() =>
   editingId.value === null ? null : exchanges.value.find((e) => e.id === editingId.value) ?? null,
 )
 
+/// 名称去空白后是否为空。后端的必填判定用的就是 trim 之后的值，这里保持同一口径——
+/// 否则"名称为空格"会被前端放行、到后端才被拒。
+const hasName = computed(() => form.value.displayName.trim() !== '')
+
+/// 凭据的两个字段是否只填了一个。
+///
+/// 后端只接受成对的 key 与 secret（半份凭据调不通任何接口，卡片上却会显示"已配置"，
+/// 那种"看起来成功"的失败最难查）。与其等一次失败的往返，不如在按钮还按不下去的时候就说明白。
+/// **passphrase 不在此列**：它是第三项，OKX 之外的平台不需要，OKX 缺它有平台自己的报错。
+///
+/// 编辑态下 `credentialsTouched` 为 false（没动凭据）时一律不算——那是"保持原样"，
+/// 不是"只填了一个"。
+const credentialPairIncomplete = computed(() => {
+  if (!credentialsTouched.value) return false
+
+  const hasKey = form.value.apiKey.trim() !== ''
+  const hasSecret = form.value.apiSecret.trim() !== ''
+
+  return hasKey !== hasSecret
+})
+
+/// 保存按钮按不下去的原因（空串 = 可以保存）。
+///
+/// 禁用的按钮必须说明为什么禁用——只灰掉而不给理由，使用者只能靠猜，
+/// 或者把每个字段试一遍才知道差什么。
+const saveBlockedReason = computed(() => {
+  if (!hasName.value) return '填上名称才能保存——同一个平台可以配多条，名字是区分它们的唯一依据。'
+  if (credentialPairIncomplete.value) return 'API 密钥与密钥要成对填：只填一个调不通任何接口。'
+
+  return ''
+})
+
 function openCreate(): void {
   editingId.value = null
   credentialsTouched.value = true
 
   // 从第 1 步开始：平台还没选，先把 form 摆在一个自洽的初值上
   lastPresetCode.value = 'binance'
-  applyPreset('binance')
-  form.value.displayName = ''
-  form.value.notes = ''
+  form.value = freshForm('binance')
   step.value = 1
   formOpen.value = true
 }
 
 /// 第 1 步选中一个平台：套用它的预设（地址、形态、费率）并进入第 2 步。
+///
+/// 换了平台就**清空凭据**：为上一家填的 key 在这一家没有任何意义，留着它只会在保存时
+/// 被当成这一家的凭据存下去——那正是"半份错误凭据"的来源，而且界面上看不出来。
+/// 返回再点同一张卡不清（不该因为一次误退而让刚填的 key 消失）。
 function choosePlatform(code: ExchangeCode): void {
+  if (code !== form.value.code) {
+    form.value.apiKey = ''
+    form.value.apiSecret = ''
+    form.value.passphrase = ''
+  }
+
   applyPreset(code)
   step.value = 2
 }
@@ -166,7 +243,6 @@ function applyPreset(code: ExchangeCode): void {
 
 async function submit(): Promise<void> {
   saving.value = true
-  errorMessage.value = ''
 
   try {
     const payload = {
@@ -201,17 +277,19 @@ async function submit(): Promise<void> {
     }
 
     formOpen.value = false
+
+    // 写操作的结果用 Toast 报。**错误尤其要走这条路**：弹窗是盖在页面上的一层，
+    // 写在页面顶部的错误条在它开着的时候根本看不见——失败会表现为"点了没反应"。
+    Message.success(editingId.value === null ? '配置已创建' : '配置已保存')
     await load()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    Message.error(error instanceof Error ? error.message : String(error))
   } finally {
     saving.value = false
   }
 }
 
 async function setEnabled(row: ExchangeConfigRow, isEnabled: boolean): Promise<void> {
-  errorMessage.value = ''
-
   try {
     // 不带地址：地址不面向界面，更新时"不传"即保持原值
     await api.updateExchange(row.id, {
@@ -223,9 +301,10 @@ async function setEnabled(row: ExchangeConfigRow, isEnabled: boolean): Promise<v
       isEnabled,
     })
 
+    Message.success(isEnabled ? '已启用' : '已停用')
     await load()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    Message.error(error instanceof Error ? error.message : String(error))
   }
 }
 
@@ -244,18 +323,39 @@ async function confirmDelete(): Promise<void> {
   if (deleteTarget.value === null) return
 
   deleting.value = true
-  errorMessage.value = ''
 
   try {
     await api.deleteExchange(deleteTarget.value.id)
+
+    Message.success(`已删除「${deleteTarget.value.displayName}」`)
     deleteOpen.value = false
     deleteTarget.value = null
     await load()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    Message.error(error instanceof Error ? error.message : String(error))
   } finally {
     deleting.value = false
   }
+}
+
+/// 新增态的「返回」回第 1 步、编辑态是「取消」直接关。按钮上的字与动作都由这里的一处判断决定，
+/// 免得字写「返回」而动作是关窗这类对不上的情况散在两个地方。
+function backOrCancel(): void {
+  if (isEditing.value) formOpen.value = false
+  else step.value = 1
+}
+
+/// 挂在某条配置上的实盘跟单员。
+///
+/// **按配置 Id 关联，不按显示名**：名字是使用者起的、后端不保证唯一，
+/// 按名字匹配会把关系对错——而错的后果是"停用一条正在被实盘使用的配置"看起来毫无影响。
+function liveUsersOf(configId: number): FollowerSummary[] {
+  return liveFollowers.value.filter((f) => f.exchangeConfigId === configId)
+}
+
+/// 费率去尾零：0.0200% 与 0.02% 是同一个数，卡面上后者更省眼睛（仍然保留 4 位小数的精度）。
+function feeText(percent: number): string {
+  return `${Number(percent.toFixed(4))}%`
 }
 
 /// 平台标识图。认不出的标识返回 null，由调用方决定显示成什么样——
@@ -283,6 +383,15 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
+
+  // 使用情况另取一次，失败只影响这一行（见 liveFollowers 的说明）
+  try {
+    liveFollowers.value = (await api.followers()).filter((f) => f.mode === 'live')
+    followersFailed.value = false
+  } catch {
+    liveFollowers.value = []
+    followersFailed.value = true
+  }
 }
 
 onMounted(load)
@@ -298,11 +407,11 @@ onMounted(load)
           <a-tag v-if="!loading" size="small">{{ exchanges.length }} 个</a-tag>
         </a-space>
       </template>
+      <!-- 右上角只留「刷新」：新建的入口**只有**列表里那张虚线卡片一处。
+           两处入口的含义完全一样，多一个只会让人犹豫"点哪个"，还让空列表里的入口
+           与它旁边那个长得不一样的普通按钮互相打架 -->
       <template #extra>
-        <a-space>
-          <a-button size="small" :loading="loading" @click="load">刷新</a-button>
-          <a-button type="primary" size="small" @click="openCreate">新建配置</a-button>
-        </a-space>
+        <a-button size="small" :loading="loading" @click="load">刷新</a-button>
       </template>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" />
@@ -329,11 +438,14 @@ onMounted(load)
               :title="codeLabel(row.code)"
             />
             <span class="card-title">{{ row.displayName }}</span>
-            <a-space :size="4">
+            <a-space :size="6">
               <a-tag size="small" color="arcoblue">{{ codeLabel(row.code) }}</a-tag>
-              <a-tag size="small" :color="row.kind === 'dex' ? 'purple' : 'gray'">
-                {{ kindLabel(row.kind) }}
-              </a-tag>
+
+              <!-- 形态与新建弹窗同款胶囊（CEX / DEX）：同一个概念在列表与弹窗里必须长一样 -->
+              <span class="kind-capsule" :class="`kind-capsule-${row.kind}`">
+                {{ kindBadge(row.kind) }}
+              </span>
+
               <a-tag v-if="row.isTestnet" size="small" color="orange">测试网</a-tag>
             </a-space>
           </div>
@@ -347,9 +459,25 @@ onMounted(load)
             </span>
           </div>
 
+          <!-- 使用情况：这张卡要回答的核心问题之一——
+               项目的基本事实是"配好凭据不会自己开始交易"，真正让它动钱的是挂上它的实盘跟单员。
+               没有这一行，"停用一条正在被使用的配置"看不出任何后果 -->
+          <div class="card-usage">
+            <template v-if="liveUsersOf(row.id).length > 0">
+              <a-tag size="small" color="arcoblue">{{ liveUsersOf(row.id).length }} 个实盘跟单</a-tag>
+              <a-tooltip
+                :content="liveUsersOf(row.id).map((f) => `跟单员 #${f.id} · ${f.leadName}`).join('\n')"
+              >
+                <span class="usage-names">{{ liveUsersOf(row.id).map((f) => f.leadName).join('、') }}</span>
+              </a-tooltip>
+            </template>
+            <span v-else-if="followersFailed" class="usage-none">实盘使用情况这次没取到</span>
+            <span v-else class="usage-none">暂无实盘跟单员在用</span>
+          </div>
+
           <div class="card-meta">
-            <span>挂单 {{ formatNumber(row.makerFeePercent, 4) }}%</span>
-            <span>吃单 {{ formatNumber(row.takerFeePercent, 4) }}%</span>
+            <span>挂单 {{ feeText(row.makerFeePercent) }}</span>
+            <span>吃单 {{ feeText(row.takerFeePercent) }}</span>
           </div>
 
           <div v-if="row.notes" class="card-notes">{{ row.notes }}</div>
@@ -374,70 +502,80 @@ onMounted(load)
       </div>
     </a-spin>
 
-    <!-- 新建 / 编辑：新建分两步，编辑直接进第 2 步 -->
+    <!-- 新建 / 编辑：新建分两步，编辑直接进第 2 步。
+         遮罩点击不关闭：这是表单，一次误点不该把刚填的东西丢掉（Esc 仍可关）。 -->
     <a-modal
       v-model:visible="formOpen"
       :title="isEditing ? '编辑交易所配置' : '新建交易所配置'"
-      :ok-loading="saving"
-      :width="560"
+      :width="680"
       :footer="false"
+      :mask-closable="false"
     >
       <a-steps v-if="!isEditing" :current="step" style="margin-bottom: 18px">
         <a-step>选择平台</a-step>
         <a-step>填写配置</a-step>
       </a-steps>
 
-      <!-- 第 1 步：平台以卡片列出。点卡片即选中并进入下一步 -->
-      <div v-if="step === 1" class="platform-grid">
-        <button
-          v-for="p in EXCHANGE_PRESETS"
-          :key="p.code"
-          type="button"
-          class="platform-card"
-          @click="choosePlatform(p.code)"
-        >
-          <div class="platform-head">
-            <img v-if="p.icon" class="platform-icon" :src="p.icon" :alt="p.label" />
-            <span class="platform-name">{{ p.label }}</span>
-            <a-tag size="small" :color="p.kind === 'dex' ? 'purple' : 'gray'">
-              {{ kindLabel(p.kind) }}
-            </a-tag>
+      <!-- 第 1 步：平台以卡片列出，分 CEX / DEX 两组。点卡片即选中并进入下一步。
+           卡片上**不放费率**：预填的费率是"常见标准档"的猜测、因账户而异，
+           摆在"还没说是哪个账号"的选择阶段，容易被当成平台本身的性质。费率在第 2 步改。 -->
+      <div v-if="step === 1">
+        <div v-for="group in EXCHANGE_PRESET_GROUPS" :key="group.kind" class="platform-group">
+          <div class="platform-group-title" :class="`platform-group-${group.kind}`">
+            {{ group.title }}
           </div>
-          <div class="platform-blurb">{{ p.blurb }}</div>
-          <div class="platform-fees">
-            挂单 {{ formatNumber(p.makerFeePercent, 4) }}% · 吃单 {{ formatNumber(p.takerFeePercent, 4) }}%
+
+          <div class="platform-grid">
+            <button
+              v-for="p in group.presets"
+              :key="p.code"
+              type="button"
+              class="platform-card"
+              @click="choosePlatform(p.code)"
+            >
+              <div class="platform-head">
+                <img v-if="p.icon" class="platform-icon" :src="p.icon" :alt="p.label" />
+                <span class="platform-name">{{ p.label }}</span>
+                <span class="kind-capsule" :class="`kind-capsule-${p.kind}`">{{ kindBadge(p.kind) }}</span>
+              </div>
+              <div class="platform-blurb">{{ p.blurb }}</div>
+            </button>
           </div>
-        </button>
+        </div>
       </div>
 
       <a-space v-else direction="vertical" fill :size="14">
-        <!-- 平台已选定：显示出来，并在新建时给一条回到第 1 步的路 -->
+        <!-- 平台已选定：头卡说明"正在配谁"。副行是存储层的事实（code • kind），
+             不是又一处中文重复——出了问题时它是对得上库里那行的名字 -->
         <div class="chosen-platform">
-          <span class="field-label" style="margin: 0">平台</span>
-          <img v-if="preset.icon" class="platform-icon" :src="preset.icon" :alt="preset.label" />
-          <span class="platform-name">{{ preset.label }}</span>
-          <a-tag size="small" :color="preset.kind === 'dex' ? 'purple' : 'gray'">
-            {{ kindLabel(preset.kind) }}
-          </a-tag>
-          <a-link v-if="!isEditing" class="reselect" @click="step = 1">换一个平台</a-link>
+          <img
+            v-if="preset.icon"
+            class="platform-icon platform-icon-lg"
+            :src="preset.icon"
+            :alt="preset.label"
+          />
+          <div class="chosen-platform-text">
+            <div class="chosen-platform-head">
+              <span class="chosen-platform-name">{{ preset.label }}</span>
+
+              <!-- 形态胶囊与步骤一**同一套样式**：同一个概念在两步里必须长一样，
+                   否则"上一步看到的中心化/去中心化"到了这一步像换了个字段 -->
+              <span class="kind-capsule" :class="`kind-capsule-${preset.kind}`">
+                {{ kindBadge(preset.kind) }}
+              </span>
+            </div>
+
+            <!-- 副行只留存储层的名字（binance）：形态已经由上面的胶囊表达，
+                 再写一遍 "• cex" 就是同一句话说两次 -->
+            <div class="chosen-platform-sub">{{ preset.code }}</div>
+          </div>
+          <a-link v-if="!isEditing" class="reselect" @click="backOrCancel">换一个平台</a-link>
         </div>
 
         <div>
-          <div class="field-label">名称</div>
+          <div class="field-label">名称 <span class="required">*</span></div>
           <a-input v-model="form.displayName" placeholder="同一个平台配多条时靠它区分，例如「币安主账号」" />
         </div>
-
-
-        <a-space :size="12" wrap>
-          <div>
-            <div class="field-label">挂单费率 %</div>
-            <a-input-number v-model="form.makerFeePercent" :min="0" :step="0.01" :precision="4" />
-          </div>
-          <div>
-            <div class="field-label">吃单费率 %</div>
-            <a-input-number v-model="form.takerFeePercent" :min="0" :step="0.01" :precision="4" />
-          </div>
-        </a-space>
 
         <!-- 凭据 -->
         <div class="credentials">
@@ -453,6 +591,13 @@ onMounted(load)
             </template>
           </div>
 
+          <!-- 该平台的取 key 指引（预设里的 credentialHint）。放在正要粘贴密钥的地方：
+               那是它唯一有用的时候——等你把 key 填错了再说，就晚了。 -->
+          <div class="cred-hint-box">
+            <span aria-hidden="true">ℹ️</span>
+            <span>{{ preset.credentialHint }}</span>
+          </div>
+
           <template v-if="!credentialsTouched">
             <div class="field-hint">
               不动这里就保持原样。要清除已存的凭据，点「更换 / 清除」后把字段留空保存即可。
@@ -461,14 +606,29 @@ onMounted(load)
 
           <template v-else>
             <a-space direction="vertical" fill :size="10" style="width: 100%">
-              <a-input v-model="form.apiKey" placeholder="API Key" allow-clear />
-              <a-input-password v-model="form.apiSecret" :placeholder="preset.secretLabel" allow-clear />
-              <a-input-password
-                v-if="preset.needsPassphrase"
-                v-model="form.passphrase"
-                placeholder="Passphrase"
-                allow-clear
-              />
+              <div>
+                <div class="field-label">API 密钥</div>
+                <a-input v-model="form.apiKey" placeholder="在平台的 API 管理页创建后粘贴" allow-clear />
+              </div>
+
+              <div>
+                <div class="field-label">{{ preset.secretLabel }}</div>
+                <a-input-password
+                  v-model="form.apiSecret"
+                  placeholder="创建时一并给出，之后只显示一次"
+                  allow-clear
+                />
+              </div>
+
+              <div v-if="preset.needsPassphrase">
+                <div class="field-label">Passphrase</div>
+                <a-input-password v-model="form.passphrase" placeholder="创建 key 时自己设的口令" allow-clear />
+              </div>
+
+              <div v-if="credentialPairIncomplete" class="field-error">
+                只填了一个：API 密钥与密钥必须成对，半份凭据调不通任何接口。
+              </div>
+
               <div class="field-hint">
                 凭据<b>按原样保存在本机数据库里（明文，未加密）</b>——请只放没有提现权限、
                 最好也没有交易权限的密钥。界面保存后只回显尾号，不提供查看入口。
@@ -478,6 +638,17 @@ onMounted(load)
           </template>
         </div>
 
+        <a-space :size="12" wrap>
+          <div>
+            <div class="field-label">挂单费率 %</div>
+            <a-input-number v-model="form.makerFeePercent" :min="0" :step="0.01" :precision="4" />
+          </div>
+          <div>
+            <div class="field-label">吃单费率 %</div>
+            <a-input-number v-model="form.takerFeePercent" :min="0" :step="0.01" :precision="4" />
+          </div>
+        </a-space>
+
         <div>
           <div class="field-label">备注</div>
           <a-textarea v-model="form.notes" :auto-size="{ minRows: 2 }" placeholder="可留空" />
@@ -486,12 +657,25 @@ onMounted(load)
       </a-space>
 
       <!-- 底部的按钮放在两步之外。第 1 步没有按钮（点卡片即前进，右上角的 × 可退出），
-           第 2 步才有上一步与确定 -->
+           第 2 步才有返回与保存。保存按不下去时把原因写出来——只给一个灰按钮，使用者只能靠猜 -->
       <div v-if="step === 2" class="modal-actions">
-        <a-space>
-          <a-button v-if="!isEditing" @click="step = 1">上一步</a-button>
-          <a-button type="primary" :loading="saving" @click="submit">确定</a-button>
-        </a-space>
+        <div v-if="saveBlockedReason && !saving" class="save-blocked">{{ saveBlockedReason }}</div>
+
+        <div class="modal-buttons">
+          <a-button long size="large" @click="backOrCancel">
+            {{ isEditing ? '取消' : '返回' }}
+          </a-button>
+          <a-button
+            long
+            size="large"
+            type="primary"
+            :loading="saving"
+            :disabled="saveBlockedReason !== ''"
+            @click="submit"
+          >
+            保存配置
+          </a-button>
+        </div>
       </div>
     </a-modal>
 
@@ -596,6 +780,28 @@ onMounted(load)
   color: var(--color-text-3);
 }
 
+/* 使用情况一行：标签 + 用它的那些人（名字多了省略号收尾，完整名单在悬停里） */
+.card-usage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  font-size: 12px;
+  color: var(--color-text-3);
+}
+
+.usage-names {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.usage-none {
+  color: var(--color-text-3);
+}
+
+
 .card-notes {
   font-size: 12px;
   color: var(--color-text-3);
@@ -618,6 +824,16 @@ onMounted(load)
 .field-label {
   font-size: 13px;
   margin-bottom: 6px;
+}
+
+.required {
+  color: rgb(var(--danger-6));
+}
+
+.field-error {
+  font-size: 12px;
+  color: rgb(var(--danger-6));
+  line-height: 1.7;
 }
 
 
@@ -665,11 +881,31 @@ onMounted(load)
   box-shadow: none;
 }
 
-/* ── 第 1 步：平台卡片 ──────────────────────────────── */
+/* ── 第 1 步：平台卡片（分 CEX / DEX 两组）──────────── */
+
+.platform-group + .platform-group {
+  margin-top: 16px;
+}
+
+/* 组标题只是"这两个平台是一类"的提示，做成小字而不是大标题：
+   它不需要被读，只需要被扫到 */
+.platform-group-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.platform-group-cex {
+  color: rgb(var(--arcoblue-6));
+}
+
+.platform-group-dex {
+  color: rgb(var(--purple-6));
+}
 
 .platform-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
 }
 
@@ -707,9 +943,28 @@ onMounted(load)
   object-fit: contain;
 }
 
-.platform-head a-tag,
-.platform-head .arco-tag {
+.platform-head .kind-capsule {
   margin-left: auto;
+}
+
+/* 形态胶囊。缩写（CEX / DEX）而不是中文全称：它要跟平台名挤在一行里，
+   而这两个缩写在本领域是通用写法。配色沿用设计稿的语义：CEX 金底、DEX 紫底 */
+.kind-capsule {
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 100px;
+  white-space: nowrap;
+}
+
+.kind-capsule-cex {
+  color: rgb(var(--arcoblue-6));
+  background: rgb(var(--gold-2));
+}
+
+.kind-capsule-dex {
+  color: rgb(var(--purple-6));
+  background: rgb(var(--purple-1));
 }
 
 .platform-name {
@@ -724,28 +979,84 @@ onMounted(load)
   line-height: 1.6;
 }
 
-.platform-fees {
-  font-size: 11px;
-  color: var(--color-text-4);
-}
-
-/* 第 2 步里的"已选平台"行：平台不该再是个下拉，它是已定的事实 */
+/* 第 2 步里的"已选平台"头卡：说清正在配谁 */
 .chosen-platform {
   display: flex;
   align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-border-1);
+  border-radius: 6px;
+}
+
+.platform-icon-lg {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+.chosen-platform-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 名称与形态胶囊一行：与「选择平台」那一步的卡片头部同一个排法 */
+.chosen-platform-head {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--color-border-1);
+}
+
+.chosen-platform-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-1);
+}
+
+/* 副行给的是存储层的名字（binance • cex），与库里那行对得上：
+   报错、查库、跟人描述时用的就是它 */
+.chosen-platform-sub {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--color-text-3);
 }
 
 .reselect {
-  margin-left: auto;
+  flex: 0 0 auto;
   font-size: 12px;
+}
+
+/* 平台自己的取 key 指引。金底沿用"要留意"的语义，与卡片列表里的凭据提示同色系 */
+.cred-hint-box {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-text-2);
+  background: rgb(var(--gold-1));
+  border: 1px solid rgb(var(--gold-3));
+  border-radius: 6px;
 }
 
 .modal-actions {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 10px;
   padding-top: 4px;
+}
+
+/* 保存按不下去的原因。只灰掉按钮而不给理由，使用者只能靠猜 */
+.save-blocked {
+  font-size: 12px;
+  line-height: 1.7;
+  color: rgb(var(--warning-6));
+}
+
+.modal-buttons {
+  display: flex;
+  gap: 12px;
 }
 </style>

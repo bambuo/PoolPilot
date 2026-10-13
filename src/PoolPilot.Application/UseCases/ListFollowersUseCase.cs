@@ -100,6 +100,7 @@ public sealed class ListFollowersUseCase(
             LeadIsEnabled = lead?.IsEnabled ?? false,
             Mode = FollowerMapper.Mode(follower.Mode),
             ExchangeName = account.ExchangeName,
+            ExchangeConfigId = follower.ExchangeConfigId,
             AvailableBalance = account.AvailableBalance,
             LivePositions = account.Positions,
             InitialCapital = follower.InitialCapital.Value,
@@ -139,6 +140,7 @@ public sealed class ListFollowersUseCase(
         LeadIsEnabled = d.LeadIsEnabled,
         Mode = d.Mode,
         ExchangeName = d.ExchangeName,
+        ExchangeConfigId = d.ExchangeConfigId,
         AvailableBalance = null,
         LivePositions = [],
         InitialCapital = d.InitialCapital,
@@ -188,8 +190,11 @@ public sealed class ListFollowersUseCase(
         Mode = FollowerMapper.Mode(follower.Mode),
 
         // 降级路径拿不到配置（也就不打库），名字留空。界面据此显示"读取中/不可得"，
-        // 而不是把一个编出来的交易所名挂在卡片上
+        // 而不是把一个编出来的交易所名挂在卡片上。
+        // **Id 照给**：它是手上就有的字段（不需要打库），而交易所页要靠它标出"这条配置有人在用"——
+        // 降级的是估值，不是这层关系
         ExchangeName = null,
+        ExchangeConfigId = follower.ExchangeConfigId,
         AvailableBalance = null,
         LivePositions = [],
         InitialCapital = follower.InitialCapital.Value,

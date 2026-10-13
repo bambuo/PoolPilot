@@ -231,6 +231,15 @@ public sealed record FollowerSummaryDto
     public required string? ExchangeName { get; init; }
 
     /// <summary>
+    /// 实盘所用的交易所配置 Id；纸面为 null。
+    ///
+    /// 交易所页靠它回答"这条配置现在有没有人在用"。**不能按显示名关联**：
+    /// 名字是使用者起的，后端不保证唯一——同名两条会把关系对错，而错的后果是
+    /// "停用一条正在被实盘使用的配置"看起来毫无影响。
+    /// </summary>
+    public required long? ExchangeConfigId { get; init; }
+
+    /// <summary>
     /// 实盘的可用保证金（交易所给的）。纸面为 null。
     ///
     /// 与"本金"是两回事：本金是**规模基准**（跟多大仓），这个是**账户里能用的钱**。
