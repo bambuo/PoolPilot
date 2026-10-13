@@ -138,11 +138,10 @@ onMounted(load)
           <a-tag v-if="!loading" size="small">{{ leads.length }} 个</a-tag>
         </a-space>
       </template>
+      <!-- 右上角只留「刷新」：创建带单员的入口**只有**列表里那张虚线卡片一处
+           （与「交易所」「跟单」两页同一口径）。两处入口含义完全一样，多一个只会让人犹豫"点哪个" -->
       <template #extra>
-        <a-space>
-          <a-button size="small" :loading="loading" @click="load">刷新</a-button>
-          <a-button type="primary" size="small" @click="openCreate">创建带单员</a-button>
-        </a-space>
+        <a-button size="small" :loading="loading" @click="load">刷新</a-button>
       </template>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" />
@@ -180,7 +179,9 @@ onMounted(load)
             <a-tooltip content="这个池被观察到并落库的仓位变化条数。与有没有人跟单无关——没人跟也会记。">
               <span class="signals-label">累计信号</span>
             </a-tooltip>
-            <span class="signals-value">{{ lead.signalCount }}</span>
+            <span class="signals-value" :class="{ 'signals-value-empty': lead.signalCount === 0 }">
+              {{ lead.signalCount }}
+            </span>
             <span class="signals-unit">条</span>
           </div>
 
@@ -201,7 +202,8 @@ onMounted(load)
           <div class="card-foot">
             <span class="foot-pool">
               <template v-if="poolEquityOf(lead.accountIndex) !== null">
-                池子权益 {{ formatUsd(poolEquityOf(lead.accountIndex) ?? 0) }}
+                <span class="foot-pool-label">池子权益</span>
+                <span class="foot-pool-value">{{ formatUsd(poolEquityOf(lead.accountIndex) ?? 0) }}</span>
               </template>
             </span>
             <a-space :size="12">
@@ -332,10 +334,22 @@ onMounted(load)
   cursor: help;
 }
 
+/* 卡上主指标。显式给 color 而不是继承：继承意味着"改父级颜色会顺手改掉它"，
+   而这个数是整张卡的视觉锚点，不该跟着别处飘。 */
 .signals-value {
   margin-left: auto;
   font-size: 22px;
   font-weight: 500;
+  color: var(--color-text-1);
+
+  /* 等宽数字：一排卡片横向扫过去时，位数不同的数字也能对齐（"8 条" 与 "64 条" 的 6 不该把 8 挤歪） */
+  font-variant-numeric: tabular-nums;
+}
+
+/* 信号数为 0 = "还没攒到"，与"攒了 64 条"不是一回事：
+   同一个字号下用最深一档会让空观察者看起来一样有分量。浅一档，与它旁边那句「还没有信号」一致 */
+.signals-value-empty {
+  color: var(--color-text-3);
 }
 
 .signals-unit {
@@ -374,8 +388,23 @@ onMounted(load)
   margin-top: 2px;
 }
 
+/* 池子权益是这张卡上最有决策分量的数字（"这个池值不值得跟"看的就是它），
+   原先整个用 --color-text-4（全卡最浅一档，比旁边"共 N 个跟单员"还浅）——轻重倒置。
+   现在按"标签浅、数值深"分开：标签 text-3，数值 text-1 并加粗一档。 */
 .foot-pool {
-  color: var(--color-text-4);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.foot-pool-label {
+  color: var(--color-text-3);
+}
+
+.foot-pool-value {
+  color: var(--color-text-1);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 账户索引是排查用的，不该参与日常阅读 */

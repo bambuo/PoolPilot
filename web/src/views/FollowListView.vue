@@ -15,6 +15,17 @@ import { formatPercent, formatNumber, formatUsd } from '@/utils/format'
 /// 与「带单员」页的分工：那边是**被观察的池**，这里是**下场的账户**。
 /// 一个池可以挂多个跟单员（各自一份本金、各记一套账），所以卡片的身份是跟单员编号，
 /// 池名只是它订阅的对象。
+/// 持仓区固定显示的行数。超过它就得滚动——高度随标的多少变，一排卡片就对不齐
+const POSITION_ROWS_VISIBLE = 2
+
+/// 这张卡此刻在显示几行持仓。
+///
+/// 实盘读**交易所的持仓**、纸面读**纸面账算出来的仓位**——两边口径不同（详情见下面模板里的说明），
+/// 行数也各算各的。抽成一处是为了让"要不要滚动"与"渲染了哪一份列表"永远是同一个判断。
+function positionRowCount(follower: FollowerSummary): number {
+  return follower.mode === 'live' ? follower.livePositions.length : follower.positions.length
+}
+
 const followers = ref<FollowerSummary[]>([])
 const leads = ref<LeadTrader[]>([])
 const loading = ref(false)
@@ -195,11 +206,10 @@ onMounted(() => {
           <a-tag v-if="!loading" size="small">{{ followers.length }} 个</a-tag>
         </a-space>
       </template>
+      <!-- 右上角只留「刷新」：开始跟单的入口**只有**列表里那张虚线卡片一处
+           （与「交易所」页同一口径）。两处入口含义完全一样，多一个只会让人犹豫"点哪个" -->
       <template #extra>
-        <a-space>
-          <a-button size="small" :loading="loading" @click="load">刷新</a-button>
-          <a-button type="primary" size="small" @click="openCreate()">开始跟单</a-button>
-        </a-space>
+        <a-button size="small" :loading="loading" @click="load">刷新</a-button>
       </template>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" />
@@ -257,18 +267,19 @@ onMounted(() => {
               >
                 {{ formatPercent(follower.returnPercent, 3) }}
               </span>
-              <span class="equity-abs">${{ formatNumber(follower.equity, 2) }}</span>
+              <!-- 净值是**金额**，不是说明文字：给它数值档（深一档），别与旁边的单位、标签同色 -->
+              <span class="equity-abs is-value">${{ formatNumber(follower.equity, 2) }}</span>
             </div>
 
             <div class="card-meta">
               跟单员 #{{ follower.id }} ·
               <!-- 实盘的本金是**规模基准**（跟多大仓），与账户里有多少钱是两回事 -->
               {{ follower.mode === 'live' ? '规模基准' : '本金' }}
-              {{ formatUsd(follower.initialCapital) }}
+              <span class="meta-value">{{ formatUsd(follower.initialCapital) }}</span>
               <!-- 实盘的比例要池子权益才算得出，列表不取池子快照，所以不在这里显示一个
                    分母不同的"比例"——详情页上那个是准的 -->
               <template v-if="follower.mode !== 'live'">
-                · 比例 {{ formatPercent(follower.scale * 100, 3) }}
+                · 比例 <span class="meta-value">{{ formatPercent(follower.scale * 100, 3) }}</span>
               </template>
               <!-- 实盘必须显示落在哪个账号上：同一个平台可以有两个账号，
                    不写出来的话两个实盘跟单员在界面上长得一模一样 -->
@@ -280,59 +291,66 @@ onMounted(() => {
             <!-- 持仓：纸面读纸面账算出来的仓位，实盘读**交易所的持仓**——
                  两边口径不同，不能共用一处渲染：曾经实盘这段是空的，卡片上就写着
                  「当前空仓」，而旁边正是「持仓名义价值 $17.75」，一句明显的假话 -->
-            <div class="card-positions">
-              <template v-if="follower.mode === 'live'">
-                <template v-if="follower.livePositions.length > 0">
-                  <div
-                    v-for="position in follower.livePositions"
-                    :key="position.venueSymbol"
-                    class="position-row"
-                  >
-                    <span>
-                      <a-tag size="small" :color="position.positionSide === 'SHORT' ? 'red' : 'green'">
-                        {{ position.positionSide === 'SHORT' ? '空' : '多' }}
-                      </a-tag>
-                      {{ position.pair ?? position.venueSymbol }}
-                      {{ formatNumber(position.size, 4) }}
-                    </span>
-                    <span
-                      :style="{
-                        color:
-                          position.unrealizedPnl >= 0
-                            ? 'rgb(var(--success-6))'
-                            : 'rgb(var(--danger-6))',
-                      }"
+            <!-- 持仓区**固定两行的高度**：高度随标的多少变的话，一排卡片会参差不齐，
+                 卡片脚（成交/跳过/名义价值）对不齐同一条水平线。超过两行由轨道自动上下滚动 -->
+            <div
+              class="card-positions"
+              :class="{ 'is-scrolling': positionRowCount(follower) > POSITION_ROWS_VISIBLE }"
+            >
+              <div class="positions-track">
+                <template v-if="follower.mode === 'live'">
+                  <template v-if="follower.livePositions.length > 0">
+                    <div
+                      v-for="position in follower.livePositions"
+                      :key="position.venueSymbol"
+                      class="position-row"
                     >
-                      ${{ formatNumber(position.unrealizedPnl, 2) }}
-                    </span>
-                  </div>
+                      <span>
+                        <a-tag size="small" :color="position.positionSide === 'SHORT' ? 'red' : 'green'">
+                          {{ position.positionSide === 'SHORT' ? '空' : '多' }}
+                        </a-tag>
+                        {{ position.pair ?? position.venueSymbol }}
+                        {{ formatNumber(position.size, 4) }}
+                      </span>
+                      <span
+                        :style="{
+                          color:
+                            position.unrealizedPnl >= 0
+                              ? 'rgb(var(--success-6))'
+                              : 'rgb(var(--danger-6))',
+                        }"
+                      >
+                        ${{ formatNumber(position.unrealizedPnl, 2) }}
+                      </span>
+                    </div>
+                  </template>
+                  <span v-else class="card-idle">交易所账号当前空仓</span>
                 </template>
-                <span v-else class="card-idle">交易所账号当前空仓</span>
-              </template>
 
-              <template v-else>
-                <template v-if="follower.positions.length > 0">
-                  <div v-for="position in follower.positions" :key="position.symbol" class="position-row">
-                    <span>
-                      <a-tag size="small" :color="position.side === 'long' ? 'green' : 'red'">
-                        {{ position.side === 'long' ? '多' : '空' }}
-                      </a-tag>
-                      {{ position.symbol }} {{ formatNumber(position.size, 1) }}
-                    </span>
-                    <span
-                      :style="{
-                        color:
-                          position.unrealizedPnl >= 0
-                            ? 'rgb(var(--success-6))'
-                            : 'rgb(var(--danger-6))',
-                      }"
-                    >
-                      ${{ formatNumber(position.unrealizedPnl, 2) }}
-                    </span>
-                  </div>
+                <template v-else>
+                  <template v-if="follower.positions.length > 0">
+                    <div v-for="position in follower.positions" :key="position.symbol" class="position-row">
+                      <span>
+                        <a-tag size="small" :color="position.side === 'long' ? 'green' : 'red'">
+                          {{ position.side === 'long' ? '多' : '空' }}
+                        </a-tag>
+                        {{ position.symbol }} {{ formatNumber(position.size, 1) }}
+                      </span>
+                      <span
+                        :style="{
+                          color:
+                            position.unrealizedPnl >= 0
+                              ? 'rgb(var(--success-6))'
+                              : 'rgb(var(--danger-6))',
+                        }"
+                      >
+                        ${{ formatNumber(position.unrealizedPnl, 2) }}
+                      </span>
+                    </div>
+                  </template>
+                  <span v-else class="card-idle">当前空仓</span>
                 </template>
-                <span v-else class="card-idle">当前空仓</span>
-              </template>
+              </div>
             </div>
 
             <!-- 最后一行两种模式共用一套骨架：
@@ -348,7 +366,11 @@ onMounted(() => {
               <span :style="{ color: follower.skipCount > 0 ? 'rgb(var(--warning-6))' : undefined }">
                 {{ follower.mode === 'live' ? '未跟上' : '跳过' }} {{ follower.skipCount }}
               </span>
-              <span style="color: var(--color-text-4)">名义价值 {{ formatUsd(follower.grossNotional) }}</span>
+
+              <!-- 名义价值是金额：与带单员卡片的「池子权益」同款处理——
+                   标签留灰、数值用最深一档。它原先写死在 text-4（全卡最浅），
+                   比左边两个计数还浅，读起来像附注而不是一个要看的数 -->
+              <span>名义价值 <span class="meta-value">{{ formatUsd(follower.grossNotional) }}</span></span>
             </div>
           </template>
 
@@ -559,14 +581,33 @@ onMounted(() => {
   gap: 10px;
 }
 
+/* 大字：纸面的收益率（内联覆盖成红绿）与实盘的账户余额共用它。
+   显式给最深一档而不是继承——它是卡片的视觉锚点，颜色不该跟着父级飘。
+   等宽数字：一排卡片横扫过去时，位数不同的金额也能对齐。 */
 .equity-value {
   font-size: 24px;
   font-weight: 500;
+  color: var(--color-text-1);
+  font-variant-numeric: tabular-nums;
 }
 
 .equity-abs {
   font-size: 13px;
   color: var(--color-text-3);
+}
+
+/* 纸面模式的这一格放的是**净值金额**（不是说明文字）：与上面的收益率同属"要看的数"，
+   给它数值档。实盘模式那格是"账户余额 · 可用 …"这类描述句，仍留在说明档 */
+.equity-abs.is-value {
+  color: var(--color-text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 行内的金额与比例。规则与带单员卡片一致：标签浅（text-3）、数值深（text-1）——
+   原先整行同一个灰，"本金 $500.00 · 比例 8.350%" 里的数要费劲才找到 */
+.meta-value {
+  color: var(--color-text-1);
+  font-variant-numeric: tabular-nums;
 }
 
 .card-meta,
@@ -575,20 +616,74 @@ onMounted(() => {
   color: var(--color-text-3);
 }
 
+/* 持仓区 = 固定高度的**视口**，高度按"两行"算出来而不是写死像素：
+   行高与行距是变量，改一处两边都跟着变（视口写死、行高改了就会出现半行）。 */
 .card-positions {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  --position-row-height: 24px;
+  --position-row-gap: 4px;
+  --position-viewport: calc(
+    (var(--position-row-height) * 2) + var(--position-row-gap)
+  );
+
+  height: var(--position-viewport);
+
+  /* 超出部分由轨道动画带出来，不给原生滚动条——列表里十几张卡片各挂一条滚动条太吵。
+     但 prefers-reduced-motion 下会退回可滚动（见文件末尾），保证第三行之后够得着 */
+  overflow: hidden;
   font-size: 13px;
   padding: 8px 0;
   border-top: 1px solid var(--color-border-1);
   border-bottom: 1px solid var(--color-border-1);
 }
 
+/* 会动的只有这一条轨道：视口（边框与内边距）不动，动的是里面的行 */
+.positions-track {
+  display: flex;
+  flex-direction: column;
+  gap: var(--position-row-gap);
+}
+
 .position-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+
+  /* 行高固定：否则"两行的高度"这种算法不成立，标签换行还会把视口撑破 */
+  height: var(--position-row-height);
+}
+
+/* 超过两行：自动上下滚动（跑马灯）。
+   用 alternate 来回走，而不是单向循环——单向循环要复制一份内容才能无缝，
+   而这里只有几行，"来回翻看"也更贴近它表达的东西。悬停暂停：鼠标压在上面时不该继续动 */
+.card-positions.is-scrolling .positions-track {
+  animation: positions-pingpong 4s ease-in-out infinite alternate;
+}
+
+.card-positions.is-scrolling:hover .positions-track {
+  animation-play-state: paused;
+}
+
+@keyframes positions-pingpong {
+  from {
+    transform: translateY(0);
+  }
+
+  /* 百分比相对**轨道自身**高度：-100% 是滚到底，再加回一个视口高度，
+     正好让最后一行停在视口底部（多滚一点就会露出空白） */
+  to {
+    transform: translateY(calc(-100% + var(--position-viewport)));
+  }
+}
+
+/* 声明"减少动效"的用户：不做动画，改成可手动滚动 */
+@media (prefers-reduced-motion: reduce) {
+  .card-positions.is-scrolling {
+    overflow-y: auto;
+  }
+
+  .card-positions.is-scrolling .positions-track {
+    animation: none;
+  }
 }
 
 .card-idle {
