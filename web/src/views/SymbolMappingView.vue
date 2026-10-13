@@ -39,19 +39,21 @@ const scanResult = ref<string | null>(null)
 /// 扫描时没能映射上的源标的（含原因）。与 scanResult 一起出现、一起被下一次扫描清掉。
 const scanFailures = ref<SymbolMappingFailure[]>([])
 
-/// 0 = 还没选。不用 null：Arco 的 select 的 v-model 不接受 null（类型检查会拦下），
-/// 而"没有选中"这件事用一个哨兵值表达就够了。
+/// 当前选中的筛选平台。`''` = 没选 = **全部平台**——选择器里因此不放「全部平台」这一项。
+///
+/// 用空串而不是 undefined：Arco 的 select 在这一版里不接受 undefined 作 v-model（类型检查会拦下，
+/// 与跟单/带单员那两处的选择器同一处境）。
 const selectedPlatform = ref('')
-
-/// "全部平台"的哨兵值：表格里既然有「交易所」列，就该能一眼看全所有平台的映射。
-const AllPlatforms = '*'
 
 const platform = computed(() =>
   platforms.value.find((p) => p.platform === selectedPlatform.value) ?? null,
 )
 
-/// 当前是不是"全部平台"视图。这时扫描/登记没有单一目标，按钮要禁用。
-const isAllPlatforms = computed(() => selectedPlatform.value === AllPlatforms)
+/// 当前是不是"全部平台"视图：判据是**没有解析出单一目标平台**（没选、清空、或选了个不在清单里的代码）。
+///
+/// 刻意不引入"全部平台"哨兵值：那样"空值"与"哨兵"就成了同一个意思的两种写法，
+/// 下游每处判断都得同时认两个——多一个真相，就多一处会漏。这里只有一个判据。
+const isAllPlatforms = computed(() => platform.value === null)
 
 /// 这条配置的平台显示名（映射的「目标平台」就是它）。
 const platformLabel = (code: string): string => {
@@ -93,6 +95,7 @@ async function load(): Promise<void> {
       platforms.value = await api.symbolPlatforms()
 
       // 默认落在第一个**有目录实现**的平台上：那是最可能想看的那个
+      // （想看全部平台，把选择器清空即可——清空态就是"全部"）
       selectedPlatform.value =
         platforms.value.find((p) => p.supported)?.platform ?? platforms.value[0]?.platform ?? ''
     }
@@ -105,8 +108,22 @@ async function load(): Promise<void> {
   }
 }
 
+/// 选择器变了（含清空）：归一化 + 重新加载。
+///
+/// **归一化只在这一处**：Arco 清空时给的是 undefined，而全页只认"没选"这一个口径（空串）。
+/// 如果下游每处都判一次 `=== '' || === undefined`，那就是同一件事的两种写法各写一遍——
+/// 漏掉一处就会出现"清空后按钮还亮着"这类只在某个路径上犯的错。
+function onPlatformChanged(value: unknown): void {
+  selectedPlatform.value = typeof value === 'string' ? value : ''
+
+  void load()
+}
+
 async function scan(): Promise<void> {
-  if (!canEditMappings.value) return
+  // 全部平台视图下没有扫描目标（按钮本已禁用，这里再收一次类型上的口）
+  const target = selectedPlatform.value
+
+  if (!canEditMappings.value || target === '') return
 
   scanning.value = true
   errorMessage.value = ''
@@ -114,7 +131,7 @@ async function scan(): Promise<void> {
   scanFailures.value = []
 
   try {
-    const result = await api.scanSymbolMappings(selectedPlatform.value)
+    const result = await api.scanSymbolMappings(target)
 
     // direct 与 deleted 是同一批标的的两面：同名→直接用，其中早先被登记过的那几行顺带收掉。
     // 并列着写会读成两件事，所以 deleted 用"其中"挂在 direct 后面
@@ -170,14 +187,9 @@ async function openForm(row: SymbolMapping | null): Promise<void> {
 
   // 平台默认取页面上选的那个（多半就是想要的）；全部平台视图下没有单一目标，取第一个支持的
   formPlatform.value =
-    isAllPlatforms.value || selectedPlatform.value === ''
+    isAllPlatforms.value
       ? platforms.value.find((p) => p.supported)?.platform ?? platforms.value[0]?.platform ?? ''
       : selectedPlatform.value
-
-  if (!isAllPlatforms.value && selectedPlatform.value !== '' && selectedPlatform.value === formPlatform.value) {
-    // 与页面选择一致时，直接沿用已经拉过的目标合约清单
-    formPlatform.value = selectedPlatform.value
-  }
 
   sourceBase.value = row?.sourceBase ?? ''
   targetBase.value = row?.targetBase ?? ''
@@ -369,8 +381,16 @@ onMounted(load)
                所以标签里带上平台名；"全部交易所"让「交易所」列有意义 -->
           <!-- 选择器列的是**系统支持的平台**，不是你配了哪些交易所：
                映射是"哪个资产对应哪个合约"的知识，与你有几个账号无关 -->
-          <a-select v-model="selectedPlatform" size="small" :style="{ width: '220px' }" @change="load">
-            <a-option :value="AllPlatforms" label="全部平台">全部平台</a-option>
+          <!-- 不放「全部平台」这一项：不选就是全部。清空（×）即回到全部平台视图，
+               占位符写着"全部平台"，所以清空后的状态也说得清 -->
+          <a-select
+            v-model="selectedPlatform"
+            size="small"
+            allow-clear
+            placeholder="全部平台"
+            :style="{ width: '220px' }"
+            @change="onPlatformChanged"
+          >
             <a-option
               v-for="p in platforms"
               :key="p.platform"
@@ -564,7 +584,7 @@ onMounted(load)
         <template #empty>
           <a-empty
             :description="
-              isAllPlatforms || selectedPlatform === ''
+              isAllPlatforms
                 ? '先在上面的选择器里选一个平台'
                 : '还没有映射。点「扫描被观察的池」自动整理一份。'
             "
