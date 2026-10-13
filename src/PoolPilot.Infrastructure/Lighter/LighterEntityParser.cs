@@ -48,38 +48,6 @@ internal static class LighterEntityParser
         };
     }
 
-    internal static PoolPosition ParsePosition(JsonElement element)
-    {
-        const string owner = "account.positions";
-
-        decimal size = Math.Abs(LighterJson.RequireDecimalText(element, "position", owner));
-        bool isLong = LighterJson.OptionalInt(element, "sign", 1) >= 0;
-        decimal liquidationPrice = LighterJson.OptionalDecimalText(element, "liquidation_price");
-
-        return new PoolPosition
-        {
-            MarketId = LighterJson.RequireInt(element, "market_id", owner),
-            Symbol = LighterJson.OptionalString(element, "symbol"),
-            Side = isLong ? PositionSide.Long : PositionSide.Short,
-            Size = size,
-            AvgEntryPrice = PriceAmount.Parse(
-                LighterJson.RequireDecimalText(element, "avg_entry_price", owner).ToString(CultureInfo.InvariantCulture)),
-            Notional = UsdAmount.From(LighterJson.RequireDecimalText(element, "position_value", owner)),
-            UnrealizedPnl = UsdAmount.From(LighterJson.RequireDecimalText(element, "unrealized_pnl", owner)),
-
-            // 持仓的 IMF 是**百分数字符串**（"25.00" → 25%），刻度与 orderBookDetails 不同。
-            // 实测仓位变动瞬间会返回 "0.00"（见 PoolPosition.Margin 的说明）：
-            // 工厂仍守卫拒绝 0（那是它的契约），这里负责把"上游没给有效值"翻译成 null。
-            Margin = ParseMargin(element, owner),
-
-            OpenOrderCount = LighterJson.OptionalInt(element, "open_order_count"),
-            CumulativeFunding = UsdAmount.From(LighterJson.OptionalDecimalText(element, "total_funding_paid_out")),
-
-            // 强平价为 0 表示"不适用"（全仓模式下多头理论强平价 ≤ 0），转成 null 避免被当成真实价格
-            LiquidationPrice = liquidationPrice > 0m ? PriceAmount.From(liquidationPrice) : null,
-        };
-    }
-
     internal static PoolOrder ParseOrder(JsonElement element)
     {
         const string owner = "orders";
@@ -134,39 +102,10 @@ internal static class LighterEntityParser
         };
     }
 
-    internal static InstrumentSpec ParseInstrument(JsonElement element)
-    {
-        const string owner = "orderBookDetails";
-
-        // 费率字段是百分数字符串（"0.0000" 表示 0%），不做缩放
-        return new InstrumentSpec
-        {
-            MarketId = LighterJson.RequireInt(element, "market_id", owner),
-            Symbol = LighterJson.OptionalString(element, "symbol"),
-            MinOrderNotional = LighterJson.OptionalDecimalText(element, "min_quote_amount"),
-            MinOrderSize = LighterJson.OptionalDecimalText(element, "min_base_amount"),
-            SizeDecimals = LighterJson.OptionalInt(element, "supported_size_decimals"),
-            PriceDecimals = LighterJson.OptionalInt(element, "supported_price_decimals"),
-            TakerFeePercent = LighterJson.OptionalDecimalText(element, "taker_fee"),
-            MakerFeePercent = LighterJson.OptionalDecimalText(element, "maker_fee"),
-        };
-    }
-
     internal static OrderBookLevel ParseBookLevel(JsonElement element) => new()
     {
         Price = PriceAmount.Parse(LighterJson.RequireString(element, "price", "order_book")),
         Size = LighterJson.RequireDecimalText(element, "size", "order_book"),
     };
-
-    /// <summary>
-    /// 解析持仓的保证金率。上游的 <c>"0.00"</c>（仓位变动瞬间）翻译为 <c>null</c>，
-    /// 而不是让"没给有效值"与"真的是 0% 保证金"混淆——后者在语义上是无穷杠杆，不可能是真实设定。
-    /// </summary>
-    private static MarginFraction? ParseMargin(JsonElement element, string owner)
-    {
-        decimal percent = LighterJson.RequireDecimalText(element, "initial_margin_fraction", owner);
-
-        return percent > 0m ? MarginFraction.FromPositionPercent(percent) : null;
-    }
 
 }

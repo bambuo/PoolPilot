@@ -14,6 +14,9 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.Http" />
+
+    <!-- 交易所对接统一走它（元包：Binance.Net / OKX.Net / GateIo.Net / Lighter.Net 一并带来）。 -->
+    <PackageReference Include="CryptoClients.Net" />
   </ItemGroup>
 
   <ItemGroup>

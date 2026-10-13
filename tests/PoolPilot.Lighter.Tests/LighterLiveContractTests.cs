@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 using PoolPilot.Application.Abstractions;
 using PoolPilot.Domain.Constants;
 using PoolPilot.Domain.Entities;
@@ -28,6 +30,26 @@ public sealed class LighterLiveContractTests
     /// <summary>实测已知的公共池，用于校验解析链路。</summary>
     private const long KnownPoolIndex = 281_474_976_552_443L;
 
+    /// <summary>契约测试用的容器：整个类共用一个，直到 ClassCleanup 才释放
+    /// （库的客户端与容器绑在一起，中途释放会让还在用的 handler 变成已释放对象）。</summary>
+    private static ServiceProvider _services = null!;
+
+    [ClassInitialize]
+    public static void Setup(TestContext context)
+    {
+        _services = new ServiceCollection()
+            .AddLogging()
+            .AddCryptoClients(options => options.EnabledExchanges = [CryptoClients.Net.Enums.Exchange.Lighter])
+            .BuildServiceProvider();
+    }
+
+    [ClassCleanup]
+    public static void Cleanup() => _services.Dispose();
+
+    /// <summary>
+    /// 走与线上同一条装配路径：库覆盖到的三条走 CryptoClients.Net，池的那五条走扩展。
+    /// 两半都在这条链上，所以契约测试同时盯着"库的模型"与"自研的解析"。
+    /// </summary>
     private static LighterPoolsClient CreateClient()
     {
         HttpClient http = new()
@@ -36,7 +58,10 @@ public sealed class LighterLiveContractTests
             Timeout = TimeSpan.FromSeconds(60),
         };
 
-        return new LighterPoolsClient(http, new LighterWebSocketClient());
+        return new LighterPoolsClient(
+            _services.GetRequiredService<global::Lighter.Net.Interfaces.Clients.ILighterUserClientProvider>()
+                .GetRestClient("live-contract-test", null, global::Lighter.Net.LighterEnvironment.Live),
+            new LighterPoolDataExtension(http, new LighterWebSocketClient()));
     }
 
     [TestMethod]
@@ -170,6 +195,15 @@ public sealed class LighterLiveContractTests
         // 若刻度读错 100 倍，偏差会立刻暴露。
         Assert.IsGreaterThan(0m, snapshot.TotalAssetValue.Value);
         Assert.IsGreaterThan(0m, snapshot.Collateral.Value);
+
+        // 持仓解析才是这条断言真正要守的东西：它曾在"持仓为空"时**静默跳过**整段校验，
+        // 于是一个"持仓全被丢掉"的回归也能报绿（实测踩到过：换了数据来源之后持仓映射失效，
+        // 整套测试照样全过）。所以这里显式要求至少有一笔持仓；池子确实空仓时用 Inconclusive
+        // 表达"没验到"，而不是让它悄悄变成"验过了"。
+        if (snapshot.ActivePositions.Count == 0)
+        {
+            Assert.Inconclusive($"池 {account} 此刻没有持仓，持仓解析这一层没被校验到——换个时间或换一个池再跑");
+        }
 
         // Margin 为 null = 上游此刻没给有效保证金率（仓位变动瞬间），该行无法参与校验，跳过
         decimal sumOfPositions = snapshot.ActivePositions.Sum(p => p.Notional.Value * (p.Margin?.Ratio ?? 0m));

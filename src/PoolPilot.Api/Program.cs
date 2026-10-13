@@ -6,6 +6,8 @@ using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.UseCases;
 using PoolPilot.Domain.Constants;
 using PoolPilot.Domain.Repositories;
+using Lighter.Net.Interfaces.Clients;
+
 using PoolPilot.Infrastructure.Lighter;
 using PoolPilot.Infrastructure.Brokers;
 using PoolPilot.Infrastructure.Monitoring;
@@ -30,6 +32,21 @@ public sealed class Program
         builder.Services.AddControllers();
         builder.Services.AddOpenApi();
         builder.Services.AddSignalR();
+
+        // ── 交易所对接 ──────────────────────────────────────────
+        // 一律走 CryptoClients.Net（AGENTS.md 里「第三方依赖最小化」的唯一例外）。
+        // EnabledExchanges 只管**运行时**初始化与聚合路由，依赖树是全的（元包把 30 家带进来）；
+        // 这里只开本项目用到的四家——其余 26 家没有理由在本进程里建客户端。
+        //
+        // 凭据**不在这里配**：同一个平台可以配多条（两个币安账号是常态），
+        // 所以客户端按账号取（IBinanceUserClientProvider 等），见 BinanceClients 的说明。
+        builder.Services.AddCryptoClients(options => options.EnabledExchanges =
+        [
+            CryptoClients.Net.Enums.Exchange.Binance,
+            CryptoClients.Net.Enums.Exchange.OKX,
+            CryptoClients.Net.Enums.Exchange.GateIo,
+            CryptoClients.Net.Enums.Exchange.Lighter,
+        ]);
 
         // ── 持久化 ──────────────────────────────────────────────
         // 只存无法重新获取的东西：监控到的事件流与跟单对照记录。
@@ -56,15 +73,21 @@ public sealed class Program
         builder.Services.AddScoped<ILiveOrderRepository, LiveOrderRepository>();
 
         // ── Lighter 客户端 ───────────────────────────────────────
+        // 分两半（依据见 LighterPoolDataExtension 的类说明）：
+        //   库覆盖到的（系统配置/账户快照/合约规格）走 CryptoClients.Net；
+        //   池枚举、净值序列、池的成交与挂单、盘口这五条库没有，走自研的扩展
         builder.Services.AddSingleton<LighterWebSocketClient>();
 
-        builder.Services.AddHttpClient<LighterPoolsClient>(http =>
+        builder.Services.AddHttpClient<LighterPoolDataExtension>(http =>
         {
             http.BaseAddress = new Uri($"{LighterConstants.MainnetRestBaseUrl}/");
             http.Timeout = TimeSpan.FromSeconds(60);
         });
 
-        builder.Services.AddScoped<ILighterPoolsClient>(sp => sp.GetRequiredService<LighterPoolsClient>());
+        builder.Services.AddScoped<ILighterPoolsClient>(sp => new LighterPoolsClient(
+            sp.GetRequiredService<ILighterUserClientProvider>()
+                .GetRestClient("public-data", null, Lighter.Net.LighterEnvironment.Live),
+            sp.GetRequiredService<LighterPoolDataExtension>()));
 
         // ── 用例 ────────────────────────────────────────────────
         builder.Services.AddScoped<GetPoolListUseCase>();
@@ -94,7 +117,9 @@ public sealed class Program
         // ── 实盘执行侧 ──────────────────────────────────────────
         // 目前只有币安 U 本位合约。上限由配置给出（LiveTrading 节），
         // 直接注册实例而不是 IOptions：应用层零包依赖，绑定的活留给组合根
-        builder.Services.AddHttpClient(nameof(ExchangeBrokerFactory));
+        // 券商的客户端由库按账号造；这里注册的命名 HttpClient 只服务**唯一那处自研调用**
+        // （币安 U 本位合约的 /order/test，库没封装，见 BinanceOrderTestExtension 的说明）
+        builder.Services.AddHttpClient(nameof(BinanceOrderTestExtension));
         builder.Services.AddSingleton<IExchangeBrokerFactory, ExchangeBrokerFactory>();
         builder.Services.AddSingleton(
             builder.Configuration.GetSection("LiveTrading").Get<LiveTradingLimits>() ?? new LiveTradingLimits());
@@ -109,7 +134,6 @@ public sealed class Program
         // 实盘账号的用户数据流：交易所主动推"仓位变了"，界面据此实时刷新。
         // 单例（连接是长生命周期的），按**账号**一条——listenKey 挂在 API key 上，
         // 同一账号下的多个跟单员共用一条流
-        builder.Services.AddHttpClient(nameof(BinanceAccountFeed));
         builder.Services.AddSingleton<AccountStreamRegistry>();
 
         // 标的映射表：扫描整理 + 热路径上的本地查询
@@ -120,7 +144,6 @@ public sealed class Program
 
         // 合约目录**按配置造**（工厂），不注册成单例：同一平台的主网与测试网是两套清单，
         // 注入单例会让"选中 OKX/测试网配置"时拿到币安主网的合约
-        builder.Services.AddHttpClient(nameof(ExchangeSymbolCatalogFactory));
         builder.Services.AddSingleton<IExchangeSymbolCatalogFactory, ExchangeSymbolCatalogFactory>();
 
         // ── 监控 ────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 
+using Binance.Net.Interfaces.Clients;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -26,7 +27,7 @@ namespace PoolPilot.Infrastructure.Monitoring;
 /// </summary>
 public sealed class AccountStreamRegistry(
     IServiceScopeFactory scopeFactory,
-    IHttpClientFactory httpClientFactory,
+    IBinanceUserClientProvider binance,
     IMonitorBroadcaster broadcaster,
     ILoggerFactory loggerFactory,
     ILogger<AccountStreamRegistry> logger) : IDisposable
@@ -85,13 +86,11 @@ public sealed class AccountStreamRegistry(
                 SingleWriter = true,
             });
 
-            // 专用 HttpClient：用户流的 REST 调用（listenKey 的建/续/删）不该与下单共用连接池，
-            // 否则一条卡住的 listenKey 请求会拖住下单
-            HttpClient http = httpClientFactory.CreateClient(nameof(BinanceAccountFeed));
-            http.BaseAddress = new Uri(config.RestBaseUrl
-                ?? throw new InvalidOperationException($"{config.DisplayName} 没有接入地址，订阅不了用户数据流。"));
+            // 这个账号的库客户端：listenKey 的建/续/删、连接与重连都由库管，
+            // 地址也由库的环境决定（配置里的接入地址对执行侧不再作数）
+            IBinanceSocketClient socket = BinanceClients.Socket(binance, config);
 
-            BinanceAccountFeed stream = new(http, loggerFactory.CreateLogger<BinanceAccountFeed>());
+            BinanceAccountFeed stream = new(loggerFactory.CreateLogger<BinanceAccountFeed>());
 
             RunningStream running = new(config, config.DisplayName, ExchangeEnumText.ToText(config.Code), cts, events);
             _streams[config.Id] = running;
@@ -101,7 +100,7 @@ public sealed class AccountStreamRegistry(
             running.Health = Task.Run(() => GuardAsync(config, running, cts.Token), CancellationToken.None);
 
             running.Pump = Task.Run(
-                () => stream.RunAsync(config, (e, ct) => PulseAsync(events.Writer, e, ct), cts.Token),
+                () => stream.RunAsync(socket, config, (e, ct) => PulseAsync(events.Writer, e, ct), cts.Token),
                 CancellationToken.None);
 
             running.Drain = Task.Run(() => DrainAsync(config.Id, events.Reader, cts.Token), CancellationToken.None);
@@ -255,7 +254,9 @@ public sealed class AccountStreamRegistry(
         while (!cancellationToken.IsCancellationRequested)
         {
             bool receivedAny = Volatile.Read(ref running.EventCount) > 0;
-            int frames = await BinanceAccountFeed.ProbeMarketDataAsync(config, cancellationToken).ConfigureAwait(false);
+            int frames = await BinanceAccountFeed
+                .ProbeMarketDataAsync(BinanceClients.Socket(binance, config), cancellationToken)
+                .ConfigureAwait(false);
 
             bool healthy = frames > 0 || receivedAny;
 
@@ -332,8 +333,12 @@ public sealed class AccountStreamRegistry(
         CancellationTokenSource reload = running.MarkReload;
         BinanceMarkPriceFeed feed = new(loggerFactory.CreateLogger<BinanceMarkPriceFeed>());
 
+        // 同一个账号的客户端（库按账号缓存）：标记价与用户流共用一条连接与一份限流
+        IBinanceSocketClient socket = BinanceClients.Socket(binance, config);
+
         running.MarksJob = Task.Run(
             () => feed.RunAsync(
+                socket,
                 config,
                 () => SnapshotOf(running),
                 (marks, ct) => OnMarksAsync(config.Id, marks, ct),

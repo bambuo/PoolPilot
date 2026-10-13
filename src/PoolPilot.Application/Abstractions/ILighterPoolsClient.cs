@@ -19,15 +19,19 @@ public enum PoolFilter
     All,
 }
 
-/// <summary>上游系统配置。</summary>
+/// <summary>
+/// 上游系统配置。
+///
+/// 曾有一个 <c>FeeCollectorAccountIndex</c>：迁移到 CryptoClients.Net 后库的模型没映射
+/// <c>fee_collector_account_index</c>，而全项目没有任何消费方——于是删掉它，
+/// 而不是留一个永远为 0 的字段（那正是"读不到"与"真的是 0"分不清的来源）。
+/// </summary>
 public sealed record LighterSystemConfig
 {
     /// <summary>池枚举的起始游标（最位高的池索引）。</summary>
     public required long LiquidityPoolIndex { get; init; }
 
     public required long StakingPoolIndex { get; init; }
-
-    public required long FeeCollectorAccountIndex { get; init; }
 }
 
 /// <summary>

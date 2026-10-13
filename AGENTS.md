@@ -15,9 +15,23 @@
 [`docs/LEAD-FOLLOWERS.md`](docs/LEAD-FOLLOWERS.md)——改动这一块之前必须先读它。
 
 **明确的边界**：执行侧只落在**币安 U 本位永续**——实盘跟单员会真实下单（下单、平仓、读账户）。
-Lighter 那边不下单：它的下单必须用自研签名，而 .NET 生态没有可用签名器（官方只提供 Go 编译的
-WASM、C 动态库、Python SDK）；OKX 与 Gate 只有合约目录（供标的映射查询）。新增一家执行场所
-只实现 `IExchangeBroker` 抽象，不改动领域逻辑。
+OKX 与 Gate 只有合约目录（供标的映射查询）。
+
+**交易所对接一律走 CryptoClients.Net**（元包，含 Binance.Net / OKX.Net / GateIo.Net / Lighter.Net）：
+签名、时间同步、限流、重连、逐字段解析都归库管，本项目只保留业务口径与错误透传。
+库没封装的少数地方**在它的客户端上加扩展成员**（C# 扩展成员，`extension(ILighterRestClient client)` 那种写法）——
+凡是"组合库已有的公开方法 + 本项目领域映射"的都这么加。**但扩展方法只能碰公开成员**：
+库的请求管线 `RestApiClient.SendAsync` 是 protected，公开的只有 `GetAuthenticationProvider`/`SetOptions`，
+所以**新增端点**没法用扩展方法接进库的管线，只能自己发。目前自己发的只有两处，
+各有专门的类写明依据与取舍：币安的 `POST /fapi/v1/order/test`（库只给了现货的 `PlaceTestOrder`）、
+Lighter 的池分析面（库的 socket 只封了 `account_all`/`account_all_assets`/`user_stats` 三个频道，
+池枚举、净值序列、池的成交与挂单它都没有）。
+新增一家执行场所只实现 `IExchangeBroker` 抽象，不改动领域逻辑。
+
+⚠️ **Lighter 的技术前提已经变了**：`Lighter.Net` 带 osx-arm64/linux/win 的原生签名库
+（官方那个 Go 编译的 C 库，P/Invoke 调用），**下单是可行的**。目前仍不启用执行侧——
+那是产品决定，不是能力限制。真要启用，先做一次实盘实测签名验证，并显式关掉
+`IntegratorFeePercentage`（默认每笔单在交易所费率之外再收 1bps 给库作者）。
 
 ## 二、角色画像
 
@@ -53,7 +67,7 @@ WASM、C 动态库、Python SDK）；OKX 与 Gate 只有合约目录（供标的
 
 - 使用 C# 14 惯用法：primary constructors、collection expressions `[]`、raw string literals（多行 JSON / SQL）、`required` 成员、records（不可变 DTO）、`sealed`（无继承意图）。
 - 只用 .NET 10 稳定 API。不引入实验性特性。
-- 第三方依赖最小化：能用框架能力解决的（EF Core、ASP.NET Core、System.Text.Json、System.Net.WebSockets）不引额外包。
+- 第三方依赖最小化：能用框架能力解决的（EF Core、ASP.NET Core、System.Text.Json、System.Net.WebSockets）不引额外包。**唯一例外是交易所对接**：那一层统一用 CryptoClients.Net——自研的签名、时间同步、限流与重连是更容易写错、也更难自己维护的部分。
 - 提交前检查：是否有更现代的写法？是否有更稳的实现？二者冲突时以「稳」优先。
 
 ### 铁律 4：测试兜底（Tests as Guarantee）
@@ -92,4 +106,7 @@ WASM、C 动态库、Python SDK）；OKX 与 Gate 只有合约目录（供标的
 - 本机 dotnet 位于 `~/.dotnet`。
 - **绝不安装任何 runtime**：安装 runtime 会覆盖 muxer，导致全线进程以 137 退出（Jetsam `bug_type 309`）。
 - 所有构建与测试命令加 `-m:1` 防止 Jetsam：`dotnet build -m:1` / `dotnet test -m:1`。
+- 起 Api 要写全：`cd src/PoolPilot.Api && ASPNETCORE_URLS=http://localhost:5274 ~/.dotnet/dotnet ./bin/Debug/net10.0/PoolPilot.Api.dll`
+  ——直接跑 `bin/Debug/net10.0/PoolPilot.Api`（apphost）会以"缺 runtime"失败：它去系统路径找，而 runtime 在 `~/.dotnet` 下。
+  工作目录必须是 `src/PoolPilot.Api`：库路径是 `ContentRootPath/../../data/poolpilot.db`，换个目录就写进另一个库了。
 - 不引入需要 `dotnet-ef` 的迁移工具链（本机 dotnet-ef 需额外的 net8 runtime）。建库用 `EnsureCreated`。

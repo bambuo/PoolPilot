@@ -364,14 +364,20 @@ WS 限制：连接数 255/IP，订阅 500/连接、5000/IP，唯一账户 500/�
 
 ## 七、明确不做的事
 
-### 7.1 下单需要签名，且 .NET 无可用签名器
+### 7.1 下单需要签名——签名器已经有了，但本项目仍不下单
 
 - 所有交易必须用 **API key 签名**后经 `POST /api/v1/sendTx` 提交，签名方案是 Lighter 自研的（非 EIP-712）。
 - API key 的注册需要一次 **L1 钱包签名**（`ChangePubKey`）；注册后下单不再需要 L1 私钥。
-- **官方签名器只有三种形态**：编译自 Go 的 WASM、C 动态库（`.so/.dylib/.dll`）、Python SDK。
-  **没有纯 .NET / 纯 JS 实现。**
-- 因此**Lighter 侧不下单**：执行落在有签名能力的场所（币安 U 本位，见 docs/EXCHANGES.md）。
-  将来若要直接交易 Lighter，路径是 P/Invoke 调用 Go 编译出的 C 动态库，且只实现 `IExchangeBroker` 抽象。
+- ⚠️ **订正（2026-10-13）**：原先这里写着"没有纯 .NET 实现，所以 .NET 生态没有可用签名器"。
+  现在它不成立了——`Lighter.Net`（CryptoExchange.Net 家族，`LighterCredentials` 用 `EthKey`）
+  把官方那个 Go 编译的 C 动态库**按平台封装好**（实测包里带 `osx-arm64` / `linux-x64` / `win-x64`
+  的 `lighter_signer`，P/Invoke 调用），下单接口齐备（下单/改单/撤单/查单）。
+- **但本项目仍不启用 Lighter 执行侧**：这已经是**产品决定**，不再是能力限制。
+  真要启用，先办两件事：
+  1. **实盘实测一次签名**（下最小单再撤掉）——README 与包内容都不算数，铁律 7 以实测为准；
+  2. **显式设 `IntegratorFeePercentage = 0`**：该包默认走 Integrator Code，每笔单会在交易所费率
+     之外再收 1bps 给库作者（README 原文）。
+- 执行侧仍在币安 U 本位（见 docs/EXCHANGES.md）；Lighter 侧的对接也统一走 CryptoClients.Net。
 
 ### 7.2 历史成交流水需要付费解锁
 
@@ -385,3 +391,25 @@ WS 限制：连接数 255/IP，订阅 500/连接、5000/IP，唯一账户 500/�
 API key 的 scope 是"一个账户索引"，必须由该账户的 L1 持有者签名注册。
 **任何人都无法在不拿到 L1 私钥的情况下代你交易，你也不能交易别人的账户。**
 跟单只能用自己的账户复刻信号。
+
+### 7.4 对接库的覆盖边界（2026-10-13 读库源码 + 实测）
+
+对接走 CryptoClients.Net 的 `JKorf.Lighter.Net`（元包钉的 1.7.0）。它的覆盖**不是全部**，
+本项目因此一分为二（两个类都写明了依据）：
+
+| 用途 | 上游入口 | 走哪条 |
+|---|---|---|
+| 系统配置 | `/api/v1/systemConfig` | 库 |
+| 账户（池）快照 | `/api/v1/account?by=index` | 库 |
+| 合约规格 | `/api/v1/orderBookDetails` | 库 |
+| 池枚举 | `/api/v1/publicPoolsMetadata` | 自研（库没有） |
+| 净值序列 | WS `pool_info` | 自研（库没有） |
+| 池的成交 | WS `account_all_trades` | 自研（库没有） |
+| 池的挂单 | WS `account_all_orders` | 自研（库没有；REST 免鉴权实测 403） |
+| 盘口 | WS `order_book/<market>` | 自研（库有 REST 版，但按 market_id 订阅更省） |
+
+两条支撑判据：
+- **库没有**：它的 socket 只注册了 `account_all` / `account_all_assets` / `user_stats` 三个频道
+  （读源码得到，不是猜的）；REST 路径里也没有 `publicPoolsMetadata`。
+- **`/api/v1/account` 不能替代池枚举**：实测带 `index/limit` 返回
+  `{"code":20001,"message":"invalid param"}`——游标枚举只有 `publicPoolsMetadata` 有。

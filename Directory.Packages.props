@@ -44,6 +44,18 @@
       以上两者均为**传递依赖钉版**，不是直接引用，删除会让漏洞回归。
     -->
     <PackageVersion Include="Microsoft.OpenApi" Version="2.7.6" />
+
+    <!--
+      交易所对接：**统一走 CryptoClients.Net**（元包，MIT，net8/9/10）。
+      它是本项目「第三方依赖最小化」的唯一例外——它换掉的是自研的签名、时间同步、
+      限流、重连与逐字段解析，那些恰恰是最容易写错、也最难自己维护的部分。
+      元包会把 30 家客户端的依赖树带进来：运行时由 EnabledExchanges 只启用用到的四家
+      （见 Program.cs 的 AddCryptoClients），但还原体积是省不掉的。
+
+      ⚠ 上游的 Lighter 包默认带 Integrator Code 费用（每笔单在交易所费率之外再收 1bps）。
+      本项目暂不启用 Lighter 下单；真要启用，必须先显式关掉它。
+    -->
+    <PackageVersion Include="CryptoClients.Net" Version="5.9.0" />
   </ItemGroup>
 
 </Project>
