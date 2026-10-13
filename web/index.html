@@ -4,9 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PoolPilot 工作台</title>
+    <!-- 标签页图标与页头用的是同一份标志（public/logo.svg）：一处改动两边跟着变 -->
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
   </head>
   <body>
     <div id="app"></div>
+    <!--
+      预涂主题：在 Vue 挂载之前就把主题写到 body 上，否则深色用户每次进来都会看到一瞬浅色底。
+      键名与判定口径与 src/composables/useTheme.ts 一致——**两处要一起改**。
+    -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('poolpilot-theme')
+          var dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
+          if (dark) document.body.setAttribute('arco-theme', 'dark')
+        } catch (e) {
+          /* 读不到首选项就按浅色走：外观问题不该挡住页面 */
+        }
+      })()
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
