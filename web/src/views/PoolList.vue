@@ -47,20 +47,6 @@ onMounted(load)
 
 <template>
   <a-space direction="vertical" fill style="width: 100%">
-    <a-alert type="warning" :show-icon="true">
-      <template #title>两个口径必须先分清</template>
-      <div style="font-size: 13px; line-height: 1.8">
-        <div>
-          <b>年化利率</b>与<b>夏普比率</b>是上游直接给出的点估计（表头 ? 可看含义）。
-          实测年化利率的取值可以到数千万个百分点、也会出现负数，
-          所以本页把它们标灰，只用于横向粗筛，不作为收益预期。
-        </div>
-        <div>
-          <b>真实回撤 / 实算夏普比率</b>由本机从净值曲线实算，上游完全不提供。逐池拉曲线成本高，放在详情页。
-        </div>
-      </div>
-    </a-alert>
-
     <a-card :bordered="false">
       <template #title>
         <a-space>
@@ -80,6 +66,19 @@ onMounted(load)
           <a-button size="small" :loading="loading" @click="load">刷新</a-button>
         </a-space>
       </template>
+
+      <!-- 表前说明与带单员页同一种形制：卡片内、表头上的浅色小字。
+           不立成告警条——它讲的是"这两列数字该怎么读"，是表的读法，不是一条要处理的警告 -->
+      <div class="list-note">
+        <div>
+          <b>上游自报</b>：年化利率、夏普比率。上游给的是点估计——实测年化利率能到数千万个百分点、
+          也能为负，所以本页把它们标灰：只用于横向粗筛，不能当收益预期（含义见表头的 ?）。
+        </div>
+        <div>
+          <b>本机实算</b>：真实回撤、实算夏普比率。由本机从净值曲线算出，上游不提供；
+          逐池拉曲线成本高，这一页不做，进池详情看。
+        </div>
+      </div>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" style="margin-bottom: 12px" />
 
@@ -240,6 +239,15 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 表前说明：与带单员页的页内说明同一档（12px / text-3 / 1.7 行高）。
+   两行分列两个来源，行与行之间不用空行——它是一段说明的两句话，不是两个段落 */
+.list-note {
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-text-3);
+}
+
 /* 表格里的链接。RouterLink 渲染的是真 `<a href>`，所以这里只负责观感：
    去掉下划线、给一个可辨识的颜色和指针，并与 Arco 的链接色一致。 */
 .cell-link {

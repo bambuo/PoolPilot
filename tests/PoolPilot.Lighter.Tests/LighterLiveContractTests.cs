@@ -372,15 +372,18 @@ public sealed class LighterLiveContractTests
         // Act
         IReadOnlyList<PoolTrade> trades = await client.FetchRecentTradesAsync(account);
 
-        // **不写死市场**：实测该池的交易标的会整个换掉（ENA → ZRO → PUMP），
-        // 写死 ENA 会让这个测试在该池换标的后永久跳过——名义上还在、实际什么都不测。
-        // 改为取"近期成交最活跃的市场"，它衡量的是"池子现在做的这一笔的摩擦成本"，
-        // 与池子当前在做什么保持一致。
+        // **样本取"刚刚那一笔"**：与池子的成交价作比较，前提是我方盘口与那笔成交同时刻。
+        // 实测反例（2026-10-14 02:53）：原先按"最活跃市场"取到的是 7.8 小时前 NEAR 的成交价 5.05923，
+        // 而那一刻盘口是 5.1752——差的 2.2% 全是这段时间的价格漂移，与摩擦成本无关，
+        // 却把这条断言顶红（-223 bps）。样本越旧，它测的就越是"行情走了多少"。
+        //
+        // 仍然**不写死市场**：该池的交易标的会整个换掉（ENA → ZRO → PUMP），写死一个市场
+        // 会在这个池换标的后永久跳过——名义上还在、实际什么都不测。按时间取最新一笔，
+        // 标的换了也自动跟上，同时保证样本是"池子现在正在做的那件事"。
         PoolTrade? sample = trades
             .Where(t => t.IsRegularTrade)
-            .GroupBy(t => t.MarketId)
-            .OrderByDescending(g => g.Count())
-            .FirstOrDefault()?.FirstOrDefault();
+            .OrderByDescending(t => t.Timestamp.Utc)
+            .FirstOrDefault();
 
         if (sample is null)
         {
@@ -397,12 +400,38 @@ public sealed class LighterLiveContractTests
             sample.Size,
             sample.Price);
 
+        // 第一段：盘口摩擦本身——**与样本新旧无关**，任何时候都能算，所以先跑。
+        // 参考价取同一张盘口的最优价：两边同时刻，没有漂移掺进来，量出来的就是"走这个尺寸要吃多少"。
+        decimal bestOnOurSide = followerSide == OrderSide.Buy ? book.BestAsk!.Value : book.BestBid!.Value;
+        decimal walkBps = Math.Abs(CopySlippageCalculator.ComputeSlippageBps(
+            slippage.OurVwap,
+            PriceAmount.From(bestOnOurSide),
+            followerSide));
+
+        Assert.IsLessThan(
+            100m,
+            walkBps,
+            $"{sample.MarketId} 号市场走 {sample.Size} 的盘口摩擦 {walkBps:F2} bps 异常"
+            + $"（最优价 {bestOnOurSide}、我方均价 {slippage.OurVwap.Value}、吃满={slippage.DepthSufficient}）");
+
+        // 第二段：与池子成交价比较——只有样本够新，这个比较才在测摩擦而不是测漂移。
+        // 阈值 10 分钟：这个池活跃时几分钟一笔，10 分钟内的漂移远小于判据的 200 bps 量级。
+        TimeSpan age = DateTimeOffset.UtcNow - sample.Timestamp.Utc;
+        if (age > TimeSpan.FromMinutes(10))
+        {
+            Assert.Inconclusive(
+                $"最近一笔成交在 {age.TotalMinutes:F0} 分钟前（{sample.MarketId} 号市场），"
+                + "价格漂移会盖过摩擦成本，无法校验与池子成交价的量级");
+            return;
+        }
+
         // Assert：量级应与实测价差结构一致（深盘数个基点），而不是几百个基点。
         // 这是整个方案的决策门——若算出的摩擦成本与实测量级不符，后面的跟单设计都无意义。
         Assert.IsLessThan(
             200m,
             Math.Abs(slippage.SlippageBps),
-            $"{sample.MarketId} 号市场漏损 {slippage.SlippageBps:F2} bps 量级异常");
+            $"{sample.MarketId} 号市场漏损 {slippage.SlippageBps:F2} bps 量级异常"
+            + $"（样本成交于 {age.TotalMinutes:F1} 分钟前）");
         Assert.AreEqual(followerSide, slippage.Side);
     }
 }
