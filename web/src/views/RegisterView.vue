@@ -132,7 +132,7 @@ async function submit(): Promise<void> {
         <div class="code-row">
           <a-input v-model="code" placeholder="六位数字" maxlength="6" />
           <a-button :loading="sending" :disabled="!canSendCode" @click="sendCode">
-            {{ cooldown > 0 ? `${cooldown} 秒后可重发` : '发送验证码' }}
+            {{ cooldown > 0 ? `${cooldown}s 后重发` : '发送验证码' }}
           </a-button>
         </div>
       </a-form-item>
@@ -171,11 +171,23 @@ async function submit(): Promise<void> {
 /* 验证码与"发送"同一行：它们是同一个动作的两半 */
 .code-row {
   display: flex;
+
+  /* `flex: 1` 不能省：Arco 的表单项内容区本身是个 flex 容器，这个 div 作为它的
+     flex 子项会**按内容收缩**（实测 290px，而上面几个整宽字段是 380px）——
+     于是这一行与其它字段的右边缘对不齐 */
+  flex: 1;
   gap: 8px;
 }
 
 .code-row .arco-input-wrapper {
   flex: 1;
+  min-width: 0;
+}
+
+/* 按钮宽度固定：倒计时文案比"发送验证码"长，宽度随文案变的话整行每秒抖一下 */
+.code-row .arco-btn {
+  flex: 0 0 auto;
+  min-width: 124px;
 }
 
 .auth-error {

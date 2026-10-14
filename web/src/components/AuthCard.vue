@@ -34,9 +34,12 @@ defineProps<{
 
 <style scoped>
 .auth-page {
+  /* **必须显式声明 border-box**：Arco 没有全局 border-box（实测这里算出来是 content-box），
+     于是 `min-height: 100vh` 再加上下各 24px 内边距 = 748px，
+     在 720 高的窗口里凭空多出一条滚动条——内容离底部明明还远。
+     表现为"登录页右侧总有个滚轮"，而它指向的是一个根本不存在的内容溢出 */
+  box-sizing: border-box;
   display: flex;
-  align-items: center;
-  justify-content: center;
   min-height: 100vh;
   padding: 24px;
   background: var(--color-fill-1);
@@ -49,6 +52,11 @@ defineProps<{
   background: var(--color-bg-1);
   border: 1px solid var(--color-border-1);
   border-radius: 10px;
+
+  /* 居中用 margin: auto，而不是父级 align-items/justify-content：
+     卡片比视口高时（例如窄窗口下的 MFA 页），flex 居中会把顶部裁掉且滚不上去，
+     那种"页面上半截永远看不到"的故障比不居中难查得多 */
+  margin: auto;
 }
 
 .auth-brand {
