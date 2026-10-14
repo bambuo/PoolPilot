@@ -528,7 +528,7 @@ onMounted(load)
     <a-modal
       v-model:visible="formOpen"
       :title="isEditing ? '编辑交易所配置' : '新建交易所配置'"
-      :width="680"
+      :width="520"
       :footer="false"
       :mask-closable="false"
       unmount-on-close
@@ -540,9 +540,9 @@ onMounted(load)
         <a-step>填写配置</a-step>
       </a-steps>
 
-      <!-- 第 1 步：平台卡。形制照 LuckyCat——**图标居中在上、名称在下**，
-           一行一张卡；形态胶囊留在名称下面（同一个概念与第 2 步的头卡长得一样）。
-           卡片上不放简介与费率：两者都不是"选哪家"这件事的依据 -->
+      <!-- 第 1 步：平台卡。形制照 LuckyCat——**图标居中在上、名称在下**，一行三张。
+           卡面只放"认得出哪家"所需的图标与名称：类别由分组标题说，卡片上不再挂胶囊
+           （同一件事在两处说，读了也没多一个信息）；简介与费率也不放，两者都不是"选哪家"的依据 -->
       <div v-if="step === 1">
         <div v-for="group in EXCHANGE_PRESET_GROUPS" :key="group.kind" class="platform-group">
           <div class="platform-group-title" :class="`platform-group-${group.kind}`">
@@ -565,7 +565,6 @@ onMounted(load)
               </span>
 
               <span class="platform-name">{{ p.label }}</span>
-              <span class="kind-capsule" :class="`kind-capsule-${p.kind}`">{{ kindBadge(p.kind) }}</span>
             </button>
           </div>
         </div>
@@ -667,18 +666,31 @@ onMounted(load)
             </template>
           </div>
 
-          <div class="fee-row">
-            <a-form-item label="挂单费率 %">
-              <a-input-number v-model="form.makerFeePercent" :min="0" :step="0.01" :precision="4" />
-            </a-form-item>
-            <a-form-item label="吃单费率 %">
-              <a-input-number v-model="form.takerFeePercent" :min="0" :step="0.01" :precision="4" />
-            </a-form-item>
-          </div>
+          <!-- 费率与备注收进可折叠区：两项都已按常见标准档预填，多数人不必动；
+               摊开摆着会把"填名称与凭据"这件正事挤到折叠线以下 -->
+          <a-collapse :bordered="false" class="optional-block">
+            <a-collapse-item key="optional">
+              <template #header>
+                <span class="optional-title">费率与备注</span>
+                <span class="optional-hint">
+                  {{ feeText(form.makerFeePercent) }} / {{ feeText(form.takerFeePercent) }}（已预填常见标准档）
+                </span>
+              </template>
 
-          <a-form-item label="备注">
-            <a-textarea v-model="form.notes" :auto-size="{ minRows: 2 }" placeholder="可留空" />
-          </a-form-item>
+              <div class="fee-row">
+                <a-form-item label="挂单费率 %">
+                  <a-input-number v-model="form.makerFeePercent" :min="0" :step="0.01" :precision="4" />
+                </a-form-item>
+                <a-form-item label="吃单费率 %">
+                  <a-input-number v-model="form.takerFeePercent" :min="0" :step="0.01" :precision="4" />
+                </a-form-item>
+              </div>
+
+              <a-form-item label="备注">
+                <a-textarea v-model="form.notes" :auto-size="{ minRows: 2 }" placeholder="可留空" />
+              </a-form-item>
+            </a-collapse-item>
+          </a-collapse>
         </a-form>
       </template>
 
@@ -933,8 +945,8 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 18px 12px;
+  gap: 4px;
+  padding: 10px 8px;
   font: inherit;
   background: var(--color-bg-1);
   border: 1px solid var(--color-border-2);
@@ -962,20 +974,20 @@ onMounted(load)
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
 }
 
 .platform-icon-lg img {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
   object-fit: contain;
 }
 
 /* 没有图标的兜底：首字母，而不是一个假图标 */
 .platform-letter {
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 700;
   color: var(--color-text-2);
 }
@@ -1068,6 +1080,25 @@ onMounted(load)
 
 .fee-row .arco-form-item {
   flex: 1;
+}
+
+/* 可折叠的次要区（费率与备注）：与凭据区同一种虚线分组框——一眼看出这两块是"分类"，
+   而不是又一组必填项。折起来时标题行右侧带出当前费率，不展开也知道里面是什么 */
+.optional-block {
+  border: 1px dashed var(--color-border-2);
+  border-radius: 8px;
+}
+
+.optional-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-1);
+}
+
+.optional-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--color-text-3);
 }
 
 /* 凭据整块：三态与折叠的语义都在这只盒子里 */
