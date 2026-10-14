@@ -11,6 +11,7 @@ import {
   presetOf,
   type ExchangeCode,
   type ExchangeKind,
+  type ExchangePreset,
 } from '@/domain/exchanges'
 import { formatDateTime } from '@/utils/format'
 
@@ -144,6 +145,25 @@ const saveBlockedReason = computed(() => {
 
   return ''
 })
+
+/// 已经配过这家的平台：第 1 步卡片右上角的「已配置」标记。
+///
+/// 它不是禁用条件——同一个平台配多条是常态（两个币安账号），标记只回答"我是不是已经有了"。
+const configuredCodes = computed(() => new Set(exchanges.value.map((e) => e.code)))
+
+/// 这一家要交出哪几样凭据，用在头卡的副行。措辞跟着预设走：
+/// Lighter 的第二个字段叫"签名私钥"，写成通用的 API Secret 就是一句错话。
+function credentialSummaryOf(exchangePreset: ExchangePreset): string {
+  return exchangePreset.needsPassphrase
+    ? `API 密钥、${exchangePreset.secretLabel} 与 Passphrase`
+    : `API 密钥 与 ${exchangePreset.secretLabel}`
+}
+
+/// 步骤条可点：**只允许从第 2 步退回第 1 步**（Arco 的 Steps 是 1-based）。
+/// 给"想换一家"多一条路——它比先找到「返回」按钮更顺手。
+function onStepChange(current: number): void {
+  if (current === 1 && !isEditing.value) step.value = 1
+}
 
 function openCreate(): void {
   editingId.value = null
@@ -511,15 +531,18 @@ onMounted(load)
       :width="680"
       :footer="false"
       :mask-closable="false"
+      unmount-on-close
     >
-      <a-steps v-if="!isEditing" :current="step" style="margin-bottom: 18px">
+      <!-- 步骤条居中收窄，并可点回退（LuckyCat 的形制：给"想换个平台"多一条路）。
+           `changeable` 不能省：Arco 只在它为真时才发 change 事件，少了它这个回退是死的 -->
+      <a-steps v-if="!isEditing" :current="step" changeable class="ex-steps" @change="onStepChange">
         <a-step>选择平台</a-step>
         <a-step>填写配置</a-step>
       </a-steps>
 
-      <!-- 第 1 步：平台以卡片列出，分 CEX / DEX 两组。点卡片即选中并进入下一步。
-           卡片上**不放费率**：预填的费率是"常见标准档"的猜测、因账户而异，
-           摆在"还没说是哪个账号"的选择阶段，容易被当成平台本身的性质。费率在第 2 步改。 -->
+      <!-- 第 1 步：平台卡。形制照 LuckyCat——**图标居中在上、名称在下**，
+           一行一张卡；形态胶囊留在名称下面（同一个概念与第 2 步的头卡长得一样）。
+           卡片上不放简介与费率：两者都不是"选哪家"这件事的依据 -->
       <div v-if="step === 1">
         <div v-for="group in EXCHANGE_PRESET_GROUPS" :key="group.kind" class="platform-group">
           <div class="platform-group-title" :class="`platform-group-${group.kind}`">
@@ -534,112 +557,103 @@ onMounted(load)
               class="platform-card"
               @click="choosePlatform(p.code)"
             >
-              <div class="platform-head">
-                <img v-if="p.icon" class="platform-icon" :src="p.icon" :alt="p.label" />
-                <span class="platform-name">{{ p.label }}</span>
-                <span class="kind-capsule" :class="`kind-capsule-${p.kind}`">{{ kindBadge(p.kind) }}</span>
-              </div>
-              <div class="platform-blurb">{{ p.blurb }}</div>
+              <span v-if="configuredCodes.has(p.code)" class="platform-configured">已配置</span>
+
+              <span class="platform-icon-lg">
+                <img v-if="p.icon" :src="p.icon" :alt="p.label" />
+                <span v-else class="platform-letter">{{ p.label.slice(0, 1) }}</span>
+              </span>
+
+              <span class="platform-name">{{ p.label }}</span>
+              <span class="kind-capsule" :class="`kind-capsule-${p.kind}`">{{ kindBadge(p.kind) }}</span>
             </button>
           </div>
         </div>
       </div>
 
-      <a-space v-else direction="vertical" fill :size="14">
-        <!-- 平台已选定：头卡说明"正在配谁"。副行是存储层的事实（code • kind），
-             不是又一处中文重复——出了问题时它是对得上库里那行的名字 -->
-        <div class="chosen-platform">
-          <img
-            v-if="preset.icon"
-            class="platform-icon platform-icon-lg"
-            :src="preset.icon"
-            :alt="preset.label"
-          />
-          <div class="chosen-platform-text">
-            <div class="chosen-platform-head">
-              <span class="chosen-platform-name">{{ preset.label }}</span>
+      <template v-else>
+        <!-- 头卡：说清"在配谁"与"这家要交出什么"。副行是**凭据需求**，措辞跟着预设走——
+             Lighter 的第二个字段叫签名私钥，不是 API Secret，写成通用词等于说错话 -->
+        <div class="ex-head">
+          <span class="ex-head-icon">
+            <img v-if="preset.icon" :src="preset.icon" :alt="preset.label" />
+            <span v-else class="platform-letter">{{ preset.label.slice(0, 1) }}</span>
+          </span>
 
-              <!-- 形态胶囊与步骤一**同一套样式**：同一个概念在两步里必须长一样，
-                   否则"上一步看到的中心化/去中心化"到了这一步像换了个字段 -->
+          <div class="ex-head-text">
+            <div class="ex-head-name">
+              <span>{{ preset.label }}</span>
               <span class="kind-capsule" :class="`kind-capsule-${preset.kind}`">
                 {{ kindBadge(preset.kind) }}
               </span>
             </div>
-
-            <!-- 副行只留存储层的名字（binance）：形态已经由上面的胶囊表达，
-                 再写一遍 "• cex" 就是同一句话说两次 -->
-            <div class="chosen-platform-sub">{{ preset.code }}</div>
+            <div class="ex-head-sub">需要 {{ credentialSummaryOf(preset) }}</div>
           </div>
+
           <a-link v-if="!isEditing" class="reselect" @click="backOrCancel">换一个平台</a-link>
         </div>
 
-        <div>
-          <div class="field-label">名称 <span class="required">*</span></div>
-          <a-input v-model="form.displayName" placeholder="同一个平台配多条时靠它区分，例如「币安主账号」" />
-        </div>
+        <a-form :model="form" layout="vertical">
+          <a-form-item label="名称" required>
+            <a-input
+              v-model="form.displayName"
+              placeholder="同一个平台配多条时靠它区分，例如「币安主账号」"
+            />
+          </a-form-item>
 
-        <!-- 凭据 -->
-        <div class="credentials">
-          <div class="cred-head">
-            <span class="field-label" style="margin: 0">凭据</span>
-            <template v-if="editingRow">
-              <span class="field-hint" style="margin: 0">
-                当前：{{ credentialsSummary(editingRow) }}
-              </span>
-              <a-link v-if="!credentialsTouched" @click="credentialsTouched = true">
+          <!-- 凭据：三态与折叠都保留（这是本项目的语义，不跟 LuckyCat 的"留空保持原值"混），
+               只是字段改成竖排表单的样子 -->
+          <div class="credentials">
+            <div class="cred-head">
+              <span class="cred-title">凭据</span>
+              <span v-if="editingRow" class="field-hint">当前：{{ credentialsSummary(editingRow) }}</span>
+              <a-link v-if="editingRow && !credentialsTouched" @click="credentialsTouched = true">
                 更换 / 清除
               </a-link>
-            </template>
-          </div>
-
-          <!-- 该平台的取 key 指引（预设里的 credentialHint）。放在正要粘贴密钥的地方：
-               那是它唯一有用的时候——等你把 key 填错了再说，就晚了。 -->
-          <div class="cred-hint-box">
-            <span aria-hidden="true">ℹ️</span>
-            <span>{{ preset.credentialHint }}</span>
-          </div>
-
-          <!-- 邀请注册入口：取 key 指引的下一个问题往往就是"还没有账号"。
-               只在新建流程出现（编辑既有配置的人已经有账号了）；新标签页打开，
-               不打断填表；样式收敛为一条次级链接——不向已经配好的人吆喝。 -->
-          <a-link
-            v-if="!isEditing && preset.inviteUrl"
-            class="invite-link"
-            :href="preset.inviteUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            :title="`通过邀请链接注册 ${preset.label}`"
-          >
-            还没有账号？通过邀请注册
-            <IconLaunch class="invite-link-icon" />
-          </a-link>
-
-          <template v-if="!credentialsTouched">
-            <div class="field-hint">
-              不动这里就保持原样。要清除已存的凭据，点「更换 / 清除」后把字段留空保存即可。
             </div>
-          </template>
 
-          <template v-else>
-            <a-space direction="vertical" fill :size="10" style="width: 100%">
-              <div>
-                <div class="field-label">API 密钥</div>
-                <a-input v-model="form.apiKey" placeholder="在平台的 API 管理页创建后粘贴" allow-clear />
+            <div class="cred-hint-box">
+              <span aria-hidden="true">ℹ️</span>
+              <span>{{ preset.credentialHint }}</span>
+            </div>
+
+            <!-- 邀请注册入口：取 key 指引的下一个问题往往就是"还没有账号"。
+                 只在新建流程出现（编辑既有配置的人已经有账号了）；新标签页打开，
+                 不打断填表；样式收敛为一条次级链接——不向已经配好的人吆喝 -->
+            <a-link
+              v-if="!isEditing && preset.inviteUrl"
+              class="invite-link"
+              :href="preset.inviteUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              :title="`通过邀请链接注册 ${preset.label}`"
+            >
+              还没有账号？通过邀请注册
+              <IconLaunch class="invite-link-icon" />
+            </a-link>
+
+            <template v-if="!credentialsTouched">
+              <div class="field-hint">
+                不动这里就保持原样。要清除已存的凭据，点「更换 / 清除」后把字段留空保存即可。
               </div>
+            </template>
 
-              <div>
-                <div class="field-label">{{ preset.secretLabel }}</div>
+            <template v-else>
+              <a-form-item label="API 密钥">
+                <a-input v-model="form.apiKey" placeholder="在平台的 API 管理页创建后粘贴" allow-clear />
+              </a-form-item>
+
+              <a-form-item :label="preset.secretLabel">
                 <a-input-password
                   v-model="form.apiSecret"
                   placeholder="创建时一并给出，之后只显示一次"
                   allow-clear
                 />
-              </div>
+              </a-form-item>
 
-              <div v-if="preset.needsPassphrase">
-                <div class="field-label">Passphrase</div>
+              <a-form-item v-if="preset.needsPassphrase" label="Passphrase">
                 <a-input-password v-model="form.passphrase" placeholder="创建 key 时自己设的口令" allow-clear />
-              </div>
+              </a-form-item>
 
               <div v-if="credentialPairIncomplete" class="field-error">
                 只填了一个：API 密钥与密钥必须成对，半份凭据调不通任何接口。
@@ -650,48 +664,42 @@ onMounted(load)
                 最好也没有交易权限的密钥。界面保存后只回显尾号，不提供查看入口。
                 <template v-if="isEditing">两个字段都留空 = 清除已存的凭据。</template>
               </div>
-            </a-space>
-          </template>
+            </template>
+          </div>
+
+          <div class="fee-row">
+            <a-form-item label="挂单费率 %">
+              <a-input-number v-model="form.makerFeePercent" :min="0" :step="0.01" :precision="4" />
+            </a-form-item>
+            <a-form-item label="吃单费率 %">
+              <a-input-number v-model="form.takerFeePercent" :min="0" :step="0.01" :precision="4" />
+            </a-form-item>
+          </div>
+
+          <a-form-item label="备注">
+            <a-textarea v-model="form.notes" :auto-size="{ minRows: 2 }" placeholder="可留空" />
+          </a-form-item>
+        </a-form>
+      </template>
+
+      <!-- 页脚左右分置（LuckyCat 的形制）：左边写清"为什么保存按不下去"，右边是动作。
+           第 1 步没有页脚——点卡片即前进，回退靠步骤条或右上角的 × -->
+      <div v-if="step === 2" class="ex-foot">
+        <div class="save-blocked-line">
+          <span v-if="saveBlockedReason && !saving" class="save-blocked">{{ saveBlockedReason }}</span>
         </div>
 
-        <a-space :size="12" wrap>
-          <div>
-            <div class="field-label">挂单费率 %</div>
-            <a-input-number v-model="form.makerFeePercent" :min="0" :step="0.01" :precision="4" />
-          </div>
-          <div>
-            <div class="field-label">吃单费率 %</div>
-            <a-input-number v-model="form.takerFeePercent" :min="0" :step="0.01" :precision="4" />
-          </div>
-        </a-space>
-
-        <div>
-          <div class="field-label">备注</div>
-          <a-textarea v-model="form.notes" :auto-size="{ minRows: 2 }" placeholder="可留空" />
-        </div>
-
-      </a-space>
-
-      <!-- 底部的按钮放在两步之外。第 1 步没有按钮（点卡片即前进，右上角的 × 可退出），
-           第 2 步才有返回与保存。保存按不下去时把原因写出来——只给一个灰按钮，使用者只能靠猜 -->
-      <div v-if="step === 2" class="modal-actions">
-        <div v-if="saveBlockedReason && !saving" class="save-blocked">{{ saveBlockedReason }}</div>
-
-        <div class="modal-buttons">
-          <a-button long size="large" @click="backOrCancel">
-            {{ isEditing ? '取消' : '返回' }}
-          </a-button>
+        <a-space>
+          <a-button @click="backOrCancel">{{ isEditing ? '取消' : '返回' }}</a-button>
           <a-button
-            long
-            size="large"
             type="primary"
-            :loading="saving"
             :disabled="saveBlockedReason !== ''"
+            :loading="saving"
             @click="submit"
           >
-            保存配置
+            {{ saving ? '保存中…' : '保存配置' }}
           </a-button>
-        </div>
+        </a-space>
       </div>
     </a-modal>
 
@@ -716,11 +724,6 @@ onMounted(load)
   font-size: 12px;
   color: var(--color-text-3);
   line-height: 1.8;
-}
-
-.mono {
-  font-family: monospace;
-  font-size: 11px;
 }
 
 .card-grid {
@@ -837,15 +840,6 @@ onMounted(load)
   cursor: help;
 }
 
-.field-label {
-  font-size: 13px;
-  margin-bottom: 6px;
-}
-
-.required {
-  color: rgb(var(--danger-6));
-}
-
 .field-error {
   font-size: 12px;
   color: rgb(var(--danger-6));
@@ -897,13 +891,21 @@ onMounted(load)
   box-shadow: none;
 }
 
-/* ── 第 1 步：平台卡片（分 CEX / DEX 两组）──────────── */
+/* ── 弹窗：步骤条 ──────────────────────────────────── */
+
+/* 居中收窄：它是这张弹窗的"路线图"，不是需要占满宽度的控件 */
+.ex-steps {
+  max-width: 320px;
+  margin: 4px auto 20px;
+}
+
+/* ── 弹窗第 1 步：平台卡（形制照 LuckyCat：图标在上、名称在下、居中）── */
 
 .platform-group + .platform-group {
   margin-top: 16px;
 }
 
-/* 组标题只是"这两个平台是一类"的提示，做成小字而不是大标题：
+/* 组标题只是"这几家是一类"的提示，做成小字而不是大标题：
    它不需要被读，只需要被扫到 */
 .platform-group-title {
   margin-bottom: 8px;
@@ -919,48 +921,69 @@ onMounted(load)
   color: rgb(var(--purple-6));
 }
 
+/* 三列固定：一家占一行也还是卡片大小，不会被拉成一整条 */
 .platform-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
 .platform-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 14px;
-  text-align: left;
-  background: var(--color-bg-2);
-  border: 1px solid var(--color-border-1);
-  border-radius: 6px;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 12px;
+  font: inherit;
+  background: var(--color-bg-1);
+  border: 1px solid var(--color-border-2);
+  border-radius: 10px;
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, background-color 0.15s;
 }
 
 .platform-card:hover {
   border-color: rgb(var(--primary-6));
-  box-shadow: 0 2px 10px rgb(0 0 0 / 8%);
+  background: var(--color-fill-1);
 }
 
-.platform-head {
+/* 已配置标记：安静的绿字，不抢"选哪家"这件事 */
+.platform-configured {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 11px;
+  color: rgb(var(--success-6));
+}
+
+/* 图标给足位置：认平台靠它，名称只是确认 */
+.platform-icon-lg {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
 }
 
-/* 品牌图标统一 20×20 的圆角方块：各家给的形状与底色都不一样（有的深底、有的透明），
-   统一成同一尺寸与圆角，一排卡片看起来才是一条线上的东西 */
-.platform-icon {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
+.platform-icon-lg img {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
   object-fit: contain;
 }
 
-.platform-head .kind-capsule {
-  margin-left: auto;
+/* 没有图标的兜底：首字母，而不是一个假图标 */
+.platform-letter {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-2);
+}
+
+.platform-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-1);
 }
 
 /* 形态胶囊。缩写（CEX / DEX）而不是中文全称：它要跟平台名挤在一行里，
@@ -983,58 +1006,51 @@ onMounted(load)
   background: rgb(var(--purple-1));
 }
 
-.platform-name {
+/* ── 弹窗第 2 步：平台头卡 ─────────────────────────── */
+
+.ex-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 16px;
+  background: var(--color-fill-1);
+  border: 1px solid var(--color-border-2);
+  border-radius: 10px;
+}
+
+.ex-head-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+}
+
+.ex-head-icon img {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.ex-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ex-head-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text-1);
 }
 
-.platform-blurb {
+/* 副行写的是"这家要交出什么凭据"，不是又一处平台名 */
+.ex-head-sub {
   font-size: 12px;
-  color: var(--color-text-3);
-  line-height: 1.6;
-}
-
-/* 第 2 步里的"已选平台"头卡：说清正在配谁 */
-.chosen-platform {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  background: var(--color-bg-2);
-  border: 1px solid var(--color-border-1);
-  border-radius: 6px;
-}
-
-.platform-icon-lg {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-}
-
-.chosen-platform-text {
-  flex: 1;
-  min-width: 0;
-}
-
-/* 名称与形态胶囊一行：与「选择平台」那一步的卡片头部同一个排法 */
-.chosen-platform-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.chosen-platform-name {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text-1);
-}
-
-/* 副行给的是存储层的名字（binance • cex），与库里那行对得上：
-   报错、查库、跟人描述时用的就是它 */
-.chosen-platform-sub {
-  font-family: monospace;
-  font-size: 11px;
   color: var(--color-text-3);
 }
 
@@ -1043,7 +1059,48 @@ onMounted(load)
   font-size: 12px;
 }
 
-/* 平台自己的取 key 指引。金底沿用"要留意"的语义，与卡片列表里的凭据提示同色系 */
+/* ── 弹窗第 2 步：表单区 ───────────────────────────── */
+
+.fee-row {
+  display: flex;
+  gap: 16px;
+}
+
+.fee-row .arco-form-item {
+  flex: 1;
+}
+
+/* 凭据整块：三态与折叠的语义都在这只盒子里 */
+.credentials {
+  padding: 12px 12px 4px;
+  margin-bottom: 20px;
+  border: 1px dashed var(--color-border-2);
+  border-radius: 8px;
+}
+
+.cred-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+}
+
+.cred-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-1);
+}
+
+.cred-head .field-hint {
+  margin: 0;
+}
+
+.cred-head .arco-link {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+/* 平台自己的取 key 指引。金底沿用"要留意"的语义 */
 .cred-hint-box {
   display: flex;
   gap: 8px;
@@ -1071,22 +1128,28 @@ onMounted(load)
   font-size: 12px;
 }
 
-.modal-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: 4px;
+/* 凭据字段的竖排表单项：把默认的 20px 下边距收一点，盒子里的节奏才不散 */
+.credentials .arco-form-item {
+  margin-bottom: 12px;
 }
 
-/* 保存按不下去的原因。只灰掉按钮而不给理由，使用者只能靠猜 */
-.save-blocked {
+/* ── 弹窗页脚：左右分置 ────────────────────────────── */
+
+.ex-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.save-blocked-line {
+  min-width: 0;
   font-size: 12px;
   line-height: 1.7;
-  color: rgb(var(--warning-6));
 }
 
-.modal-buttons {
-  display: flex;
-  gap: 12px;
+.save-blocked {
+  color: rgb(var(--warning-6));
 }
 </style>

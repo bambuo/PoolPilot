@@ -31,8 +31,6 @@ export interface ExchangePreset {
   /// 各家的 CDN 会拦（Gate 的 apple-touch-icon 直接 403）、也会变，运行时外链等于把界面交给别人。
   /// 来源与尺寸写在 assets/exchanges 目录下的说明里；`null` 表示没有图标（兜底项）。
   readonly icon: string | null
-  /// 一句话简介，用在"选择平台"那一步的卡片上：先让人认出这是哪个平台。
-  readonly blurb: string
   /// 第二个凭据字段的标签。Lighter 放的是签名私钥，与 CEX 的 API Secret 语义不同。
   readonly secretLabel: string
   /// 该平台的凭据要多填一个 passphrase（OKX 用）。
@@ -53,7 +51,6 @@ export interface ExchangePreset {
 const CustomPreset: ExchangePreset = {
   code: 'custom',
   icon: null,
-  blurb: '库里存着清单外的平台标识时的兜底显示项。',
   label: '其他平台',
   kind: 'cex',
   restBaseUrl: '',
@@ -69,7 +66,6 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
   {
     code: 'lighter',
     icon: lighterIcon,
-    blurb: 'zk 永续 DEX。本项目的池数据全部来自这里。',
     label: 'Lighter',
     kind: 'dex',
     restBaseUrl: 'https://mainnet.zklighter.elliot.ai/api/v1',
@@ -86,7 +82,6 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
   {
     code: 'binance',
     icon: binanceIcon,
-    blurb: 'U 本位永续，接口域名 fapi。',
     label: '币安',
     kind: 'cex',
     restBaseUrl: 'https://fapi.binance.com',
@@ -101,7 +96,6 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
   {
     code: 'okx',
     icon: okxIcon,
-    blurb: '统一账户，凭据需要一个 passphrase。',
     label: 'OKX',
     kind: 'cex',
     restBaseUrl: 'https://www.okx.com',
@@ -116,7 +110,6 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
   {
     code: 'gate',
     icon: gateIcon,
-    blurb: 'USDT 永续，v4 接口。',
     label: 'Gate',
     kind: 'cex',
     restBaseUrl: 'https://api.gateio.ws/api/v4',
