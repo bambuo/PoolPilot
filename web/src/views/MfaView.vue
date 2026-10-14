@@ -134,15 +134,20 @@ async function backToLogin(): Promise<void> {
           <span class="qr-fallback-label">扫不了？手动输入密钥</span>
           <div class="qr-secret-row">
             <code class="qr-secret">{{ challenge.secret }}</code>
-            <button
-              type="button"
+
+            <!-- 复制是个**次要动作**：不画边框，悬停时才浮出一层浅底。
+                 用 Arco 的文本按钮而不是自己写一个带边框的按钮——
+                 边框会把它抬成"页面上的一个操作"，而它只是密钥旁边的一个小动作 -->
+            <a-button
+              type="text"
+              size="mini"
               class="copy-button"
               title="复制密钥"
               aria-label="复制密钥"
               @click="copySecret"
             >
-              <IconCopy />
-            </button>
+              <template #icon><IconCopy /></template>
+            </a-button>
           </div>
         </div>
       </div>
@@ -228,25 +233,13 @@ async function backToLogin(): Promise<void> {
   margin-top: 2px;
 }
 
+/* 与顶栏的主题开关、账号按钮同一档：无边框，悬停给一层浅底 */
 .copy-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  font-size: 13px;
   color: var(--color-text-3);
-  background: transparent;
-  border: 1px solid var(--color-border-2);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
 }
 
 .copy-button:hover {
   color: rgb(var(--primary-6));
-  border-color: rgb(var(--primary-6));
 }
 
 .qr-secret {
