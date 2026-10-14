@@ -189,7 +189,7 @@ public sealed class AuthApiTests
     }
 
     /// <summary>发验证码 → 从假投递器里取码 → 注册。三步在这一组测试里反复要用。</summary>
-    private static async Task RegisterAsync(HttpClient client, string email, string password, AuthTestApp app)
+    internal static async Task RegisterAsync(HttpClient client, string email, string password, AuthTestApp app)
     {
         HttpResponseMessage codeResponse = await client.PostAsJsonAsync(
             new Uri("/api/auth/register/code", UriKind.Relative),
@@ -224,7 +224,7 @@ public sealed class AuthApiTests
     }
 
     /// <summary>从邮件正文里挖出六位码。</summary>
-    private static string ExtractCode(string body)
+    internal static string ExtractCode(string body)
     {
         Match match = Regex.Match(body, @"\b\d{6}\b");
 

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
+
+import SmtpFields from '@/components/SmtpFields.vue'
 import { IconClockCircle, IconEmail, IconFile } from '@arco-design/web-vue/es/icon'
 
 import {
@@ -508,69 +510,21 @@ onMounted(loadAll)
         </div>
       </div>
 
-      <a-form :model="providerForm" layout="vertical">
-        <a-form-item label="显示名" required>
-          <a-input v-model="providerForm.displayName" placeholder="如「主邮箱」「通知专用」" />
-        </a-form-item>
+      <!-- 字段组与「首次初始化」页共用（见 SmtpFields 的说明） -->
+      <SmtpFields
+        v-model="providerForm"
+        :password-placeholder="editingProvider === null ? '邮箱服务商给的授权码' : '留空保持原值'"
+        :password-hint="editingProvider?.passwordHint ?? null"
+      />
 
-        <a-form-item label="SMTP 主机" required>
-          <a-input v-model="providerForm.host" placeholder="如 smtp.example.com" />
-        </a-form-item>
-
-        <div class="two-col">
-          <a-form-item label="端口">
-            <a-input-number v-model="providerForm.port" :min="1" :max="65535" />
-          </a-form-item>
-
-          <a-form-item label="STARTTLS">
-            <a-switch v-model="providerForm.useStartTls" />
-          </a-form-item>
-        </div>
-
-        <a-form-item label="登录名">
-          <a-input v-model="providerForm.userName" placeholder="通常是完整邮箱地址" />
-        </a-form-item>
-
-        <a-form-item label="口令（授权码）">
-          <a-input-password
-            v-model="providerForm.password"
-            :placeholder="editingProvider === null ? '邮箱服务商给的授权码' : '留空保持原值'"
-            allow-clear
-          />
-          <template #extra>
-            <span class="field-hint">
-              按原样保存在本机数据库里（明文，未加密），界面只回显尾号。
-              <template v-if="editingProvider?.passwordHint">
-                当前尾号 {{ editingProvider.passwordHint }}。
-              </template>
-            </span>
-          </template>
-        </a-form-item>
-
-        <a-form-item label="发件人地址" required>
-          <a-input v-model="providerForm.fromAddress" placeholder="验证码邮件的发出地址" />
-        </a-form-item>
-
-        <a-form-item label="发件人显示名">
-          <a-input v-model="providerForm.fromName" />
-        </a-form-item>
-
-        <a-form-item label="启用">
-          <a-switch v-model="providerForm.isEnabled" />
-          <template #extra>
-            <span class="field-hint">停用的通道不会被样板选到（选了也发不出去）。</span>
-          </template>
-        </a-form-item>
-
-        <div v-if="testResult" class="test-result-inline">
-          <a-alert :type="testResult.delivered ? 'success' : 'warning'">
-            <template #title>{{ testResult.message }}</template>
-            <div v-if="testResult.error && !testResult.message.includes(testResult.error)">
-              {{ testResult.error }}
-            </div>
-          </a-alert>
-        </div>
-      </a-form>
+      <div v-if="testResult" class="test-result-inline">
+        <a-alert :type="testResult.delivered ? 'success' : 'warning'">
+          <template #title>{{ testResult.message }}</template>
+          <div v-if="testResult.error && !testResult.message.includes(testResult.error)">
+            {{ testResult.error }}
+          </div>
+        </a-alert>
+      </div>
 
       <div class="ex-foot">
         <a-link v-if="editingProvider !== null" @click="markPasswordForClearing">
@@ -827,15 +781,6 @@ onMounted(loadAll)
 .ex-head-sub {
   font-size: 12px;
   color: var(--color-text-3);
-}
-
-.two-col {
-  display: flex;
-  gap: 16px;
-}
-
-.two-col .arco-form-item {
-  flex: 1;
 }
 
 .ex-foot {

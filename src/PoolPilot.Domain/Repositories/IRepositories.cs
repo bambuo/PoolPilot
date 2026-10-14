@@ -78,6 +78,12 @@ public interface IUserRepository
     /// <summary>按主键读取；不存在时返回 <c>null</c>。</summary>
     Task<User?> GetAsync(long id, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 账号总数。首次初始化的判据靠它——"这套系统还没被用过"就是"一个账号都还没有"
+    /// （见 GetSetupStatusUseCase 的说明）。
+    /// </summary>
+    Task<int> CountAsync(CancellationToken cancellationToken = default);
+
     /// <summary>新建并返回带库分配主键的账号。</summary>
     Task<User> CreateAsync(User user, CancellationToken cancellationToken = default);
 

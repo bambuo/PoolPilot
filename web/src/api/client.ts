@@ -1126,3 +1126,26 @@ export const notificationApi = {
 
   logs: () => getJson<NotificationLogEntry[]>('/api/notifications/logs'),
 }
+
+// ── 首次初始化 ─────────────────────────────────────────────
+//
+// 只需要配通知通道（注册验证码靠它发出去）。这两个接口**匿名可达**，
+// 但只在系统还没初始化时有效——初始化完成之后写接口会回 400。
+
+export interface SetupStatus {
+  needsSetup: boolean
+  /** 没配好的原因，界面直接显示这一句；已初始化时为 null。 */
+  reason: string | null
+}
+
+export const setupApi = {
+  status: () => getJson<SetupStatus>('/api/setup/status'),
+
+  /// 配通道 + 让注册验证码的样板指向它 + 当场发一封测试邮件（三件事一次做完）。
+  configureNotifications: (payload: NotificationProviderPayload) =>
+    getJson<NotificationDelivery>('/api/setup/notifications', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+}

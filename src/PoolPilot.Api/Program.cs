@@ -188,6 +188,10 @@ public sealed class Program
         builder.Services.AddScoped<UpdateNotificationTemplateUseCase>();
         builder.Services.AddScoped<ListNotificationLogsUseCase>();
 
+        // 首次初始化（匿名但只在未初始化时生效，见 SetupController 的说明）
+        builder.Services.AddScoped<GetSetupStatusUseCase>();
+        builder.Services.AddScoped<InitializeNotificationsUseCase>();
+
         // ── 实盘执行侧 ──────────────────────────────────────────
         // 目前只有币安 U 本位合约。上限由配置给出（LiveTrading 节），
         // 直接注册实例而不是 IOptions：应用层零包依赖，绑定的活留给组合根

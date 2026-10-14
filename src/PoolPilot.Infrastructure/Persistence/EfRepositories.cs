@@ -643,6 +643,9 @@ public sealed class UserRepository(PoolPilotDbContext db) : IUserRepository
         return row?.ToDomain();
     }
 
+    public Task<int> CountAsync(CancellationToken cancellationToken = default) =>
+        db.Users.CountAsync(cancellationToken);
+
     public async Task<User> CreateAsync(User user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);

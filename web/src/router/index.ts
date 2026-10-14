@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { useSession } from '@/composables/useSession'
+import { useSetup } from '@/composables/useSetup'
 
 import PoolList from '@/views/PoolList.vue'
 
@@ -25,6 +26,14 @@ export const router = createRouter({
       path: '/register',
       name: 'register',
       component: () => import('@/views/RegisterView.vue'),
+      meta: { public: true },
+    },
+    {
+      // 首次初始化：配通知通道。**只在系统还没初始化时可进**——
+      // 配好之后守卫会把人送回登录页（改通道去「通知 → 提供商」）
+      path: '/setup',
+      name: 'setup',
+      component: () => import('@/views/SetupView.vue'),
       meta: { public: true },
     },
     {
@@ -115,6 +124,7 @@ export const router = createRouter({
 /// 而不是"没登录也能看"（往往没人发现）。
 router.beforeEach(async (to) => {
   const { user, loaded, load, redirectAfterLogin } = useSession()
+  const setup = useSetup()
 
   // 会话只问一次：它是服务端说了算的状态，但没必要每次跳转都打一遍 /me。
   // 之后由 401 统一处理负责纠正（见 main.ts 的 bindUnauthorizedHandler）。
@@ -122,7 +132,24 @@ router.beforeEach(async (to) => {
     await load()
   }
 
+  // 初始化状态也问一次（匿名接口）。**它优先于登录判断**：
+  // 未初始化意味着注册验证码根本发不出去，先把人引到初始化页，注册才有意义。
+  if (setup.needsSetup.value === null) {
+    await setup.load()
+  }
+
   const isPublic = to.meta.public === true
+
+  // 未初始化：一切入口先落在初始化页。已经登录的人不拦（他早就过了注册那一关，
+  // 通道可以稍后在「通知 → 提供商」里配）；点了"跳过"的人也不拦（那是一条明确的选择）。
+  if (setup.needsSetup.value === true && !setup.skipped.value && user.value === null && to.name !== 'setup') {
+    return { name: 'setup' }
+  }
+
+  // 已初始化：初始化页不该还能进——它不是第二个配置入口
+  if (setup.needsSetup.value === false && to.name === 'setup' && !setup.skipped.value) {
+    return user.value === null ? { name: 'login' } : { name: 'graph' }
+  }
 
   if (!isPublic && user.value === null) {
     // 记下想去的地方，登录成功后回跳——但**只接受站内路径**，

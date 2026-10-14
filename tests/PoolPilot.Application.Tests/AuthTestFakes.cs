@@ -42,6 +42,9 @@ internal sealed class FakeUserRepository : IUserRepository
     public Task<User?> GetAsync(long id, CancellationToken cancellationToken = default) =>
         Task.FromResult(_users.FirstOrDefault(u => u.Id == id));
 
+    public Task<int> CountAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(_users.Count);
+
     public Task<User> CreateAsync(User user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
@@ -301,6 +304,9 @@ internal sealed class FakeNotificationProviderRepository : INotificationProvider
     private readonly List<NotificationProvider> _providers = [];
     private long _nextId = 1;
 
+    /// <summary>摆进去的通道（测试直接读它断言）。</summary>
+    public IReadOnlyList<NotificationProvider> Providers => _providers;
+
     public Task<IReadOnlyList<NotificationProvider>> ListAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<NotificationProvider>>(_providers);
 
@@ -342,7 +348,10 @@ internal sealed class FakeNotificationProviderRepository : INotificationProvider
     /// <summary>摆一个"有几条样板在用它"的答案（删除前的检查）。</summary>
     public Dictionary<long, int> TemplatesUsing { get; } = [];
 
-    public NotificationProvider Seed(string displayName = "测试通道", bool isEnabled = true)
+    public NotificationProvider Seed(
+        string displayName = "测试通道",
+        bool isEnabled = true,
+        string? host = "smtp.example.com")
     {
         NotificationProvider provider = new()
         {
@@ -350,7 +359,7 @@ internal sealed class FakeNotificationProviderRepository : INotificationProvider
             Kind = Domain.Constants.NotificationKinds.Email,
             DisplayName = displayName,
             IsEnabled = isEnabled,
-            Host = "smtp.example.com",
+            Host = host,
             Port = 587,
             UseStartTls = true,
             UserName = "user@example.com",
@@ -370,6 +379,9 @@ internal sealed class FakeNotificationTemplateRepository : INotificationTemplate
 {
     private readonly List<NotificationTemplate> _templates = [];
     private long _nextId = 1;
+
+    /// <summary>摆进去的样板（测试直接读它断言）。</summary>
+    public IReadOnlyList<NotificationTemplate> Templates => _templates;
 
     public Task<IReadOnlyList<NotificationTemplate>> ListAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<NotificationTemplate>>(_templates);
