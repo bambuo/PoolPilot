@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Message } from '@arco-design/web-vue'
+import { IconLaunch } from '@arco-design/web-vue/es/icon'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { api, type ExchangeConfigRow, type FollowerSummary } from '@/api/client'
@@ -598,6 +599,21 @@ onMounted(load)
             <span>{{ preset.credentialHint }}</span>
           </div>
 
+          <!-- 邀请注册入口：取 key 指引的下一个问题往往就是"还没有账号"。
+               只在新建流程出现（编辑既有配置的人已经有账号了）；新标签页打开，
+               不打断填表；样式收敛为一条次级链接——不向已经配好的人吆喝。 -->
+          <a-link
+            v-if="!isEditing && preset.inviteUrl"
+            class="invite-link"
+            :href="preset.inviteUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            :title="`通过邀请链接注册 ${preset.label}`"
+          >
+            还没有账号？通过邀请注册
+            <IconLaunch class="invite-link-icon" />
+          </a-link>
+
           <template v-if="!credentialsTouched">
             <div class="field-hint">
               不动这里就保持原样。要清除已存的凭据，点「更换 / 清除」后把字段留空保存即可。
@@ -1039,6 +1055,20 @@ onMounted(load)
   background: rgb(var(--gold-1));
   border: 1px solid rgb(var(--gold-3));
   border-radius: 6px;
+}
+
+/* 邀请注册入口：紧贴取 key 指引的下一条。小、灰、可不理——
+   它只对"还没有账号"的人有用，有账号的人扫过去不构成打扰 */
+.invite-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: -4px 0 10px;
+  font-size: 12px;
+}
+
+.invite-link-icon {
+  font-size: 12px;
 }
 
 .modal-actions {

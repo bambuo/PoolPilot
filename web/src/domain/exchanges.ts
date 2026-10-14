@@ -39,6 +39,10 @@ export interface ExchangePreset {
   readonly needsPassphrase: boolean
   /// 凭据从哪来的提示——这一句能省掉一次"去哪找 key"的摸索。
   readonly credentialHint: string
+  /// 该平台的注册页（邀请链接，可选）。"去哪找 key"的下一个问题往往就是"还没有账号"，
+  /// 这条就长在凭据一节里；只在新建流程展示（编辑既有配置的人已经有账号了），
+  /// 留空的预设（如兜底项）则整条隐藏。
+  readonly inviteUrl?: string
 }
 
 /// 不在清单里的标识一律退回它。
@@ -77,6 +81,7 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
     credentialHint:
       'Lighter 的 API Key 要在官网用 L1 钱包签名注册。本项目当前只读它的公开数据'
       + '（Lighter 侧不下单），这把 key 暂时没有消费方。',
+    inviteUrl: 'https://app.lighter.xyz/?referral=740636EX&source=none',
   },
   {
     code: 'binance',
@@ -91,6 +96,7 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
     secretLabel: 'API Secret',
     needsPassphrase: false,
     credentialHint: '在币安「API 管理」创建，建议只勾选合约交易、并绑定 IP。',
+    inviteUrl: 'https://www.bsmkweb.cc/register?ref=1185731486',
   },
   {
     code: 'okx',
@@ -105,6 +111,7 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
     secretLabel: 'API Secret',
     needsPassphrase: true,
     credentialHint: 'OKX 的 API Key 需要一个 passphrase（创建时自己设的），三项都要填。',
+    inviteUrl: 'https://www.mitnpkwxvfr.com/join/M66WIHRC',
   },
   {
     code: 'gate',
@@ -119,6 +126,7 @@ export const EXCHANGE_PRESETS: readonly ExchangePreset[] = [
     secretLabel: 'API Secret',
     needsPassphrase: false,
     credentialHint: '在 Gate「API Keys」创建，注意合约与现货的权限是分开勾的。',
+    inviteUrl: 'https://www.gate.com/zh/referral/earn-together/invite/VFZHBGPEAQ?ref=VFZHBGPEAQ&ref_type=103&utm_cmp=rXJBDjtJ&activity_id=1790170412453',
   },
 ]
 
