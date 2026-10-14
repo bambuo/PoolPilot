@@ -47,10 +47,17 @@ const form = defineModel<{
         <a-input-number v-model="form.port" :min="1" :max="65535" />
       </a-form-item>
 
-      <a-form-item label="STARTTLS">
+      <!-- 字段名用中文：STARTTLS 是协议名，不该直接当标签——
+           人要知道的是"这封信在网络上是不是加密的"，而不是那个升级握手的名字。
+           协议名留在说明里，供需要按服务商文档核对的人对照 -->
+      <a-form-item label="加密传输">
         <a-switch v-model="form.useStartTls" />
       </a-form-item>
     </div>
+
+    <!-- 说明铺在整行之下，不塞进右边那个窄列：挤在 180px 里会折成四行，
+         把表单整体推高一大截（实测过） -->
+    <div class="field-hint row-hint">STARTTLS：先明文连上再升级为加密（587 的标准做法）</div>
 
     <a-form-item label="登录名">
       <a-input v-model="form.userName" placeholder="通常是完整邮箱地址" />
@@ -98,5 +105,10 @@ const form = defineModel<{
   font-size: 12px;
   line-height: 1.7;
   color: var(--color-text-3);
+}
+
+/* 跟在两列行之后、铺满整行的一段说明 */
+.row-hint {
+  margin: -6px 0 14px;
 }
 </style>

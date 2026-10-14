@@ -1141,11 +1141,15 @@ export interface SetupStatus {
 export const setupApi = {
   status: () => getJson<SetupStatus>('/api/setup/status'),
 
-  /// 配通道 + 让注册验证码的样板指向它 + 当场发一封测试邮件（三件事一次做完）。
+  /// 存下通道 + 让注册验证码的样板指向它。**不发测试邮件**——那是下面那一个。
   configureNotifications: (payload: NotificationProviderPayload) =>
-    getJson<NotificationDelivery>('/api/setup/notifications', {
+    getJson<SetupStatus>('/api/setup/notifications', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     }),
+
+  /// 用**已保存**的通道发一封测试邮件（测的是库里那一份，不是界面上刚敲的）。
+  testNotification: () =>
+    getJson<NotificationDelivery>('/api/setup/notifications/test', { method: 'POST' }),
 }

@@ -191,6 +191,7 @@ public sealed class Program
         // 首次初始化（匿名但只在未初始化时生效，见 SetupController 的说明）
         builder.Services.AddScoped<GetSetupStatusUseCase>();
         builder.Services.AddScoped<InitializeNotificationsUseCase>();
+        builder.Services.AddScoped<SendSetupTestNotificationUseCase>();
 
         // ── 实盘执行侧 ──────────────────────────────────────────
         // 目前只有币安 U 本位合约。上限由配置给出（LiveTrading 节），

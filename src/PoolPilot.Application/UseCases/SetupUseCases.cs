@@ -65,21 +65,22 @@ public sealed class GetSetupStatusUseCase(
 }
 
 /// <summary>
-/// 首次初始化：配一条可用的通知通道，并让注册验证码的样板指向它，然后当场发一封测试邮件。
+/// 首次初始化（第一步）：存下通知通道，并让注册验证码的样板指向它。
 ///
-/// 三件事在**一次调用**里做完，因为它们是同一个前提的三半：只建通道不指样板，
-/// 注册码依然发不出去（默认样板没有指向任何通道）；不测一下就结束，
-/// 使用者要到注册那一刻才知道口令填错了——而那一刻他正急着注册。
+/// 两件事在**一次调用**里做完：只建通道不指样板，注册码依然发不出去
+/// （默认样板没有指向任何通道）——那正是"看起来配好了"的经典坏法。
+///
+/// **发测试邮件是另一步**（<see cref="SendSetupTestNotificationUseCase"/>）：
+/// 界面把它做成两个按钮（保存 / 发送测试邮件），因为它们的后果不同——
+/// 保存只是写库，测试会真的往外发信、并且测的是**已保存的参数**。
 /// </summary>
 public sealed class InitializeNotificationsUseCase(
     GetSetupStatusUseCase setupStatus,
     INotificationProviderRepository providers,
     INotificationTemplateRepository templates,
-    INotificationMailer mailer,
-    INotificationLogRepository logs,
     TimeProvider clock)
 {
-    public async Task<NotificationDeliveryDto> ExecuteAsync(
+    public async Task<SetupStatusDto> ExecuteAsync(
         NotificationProviderUpsertDto request,
         CancellationToken cancellationToken = default)
     {
@@ -130,35 +131,9 @@ public sealed class InitializeNotificationsUseCase(
             await templates.UpdateAsync(next, cancellationToken).ConfigureAwait(false);
         }
 
-        // 当场发一封：口令错、端口封、发件人未验证，这三件事只有真发一次才知道
-        const string subject = "PoolPilot 通知通道测试";
-        const string body =
-            """
-            这条消息说明这条通道能用。
-
-            如果你收到了它，注册验证码也会发到这个邮箱。
-            """;
-
-        EmailAddress recipient = EmailAddress.Parse(provider.FromAddress!);
-
-        NotificationDelivery delivery = await mailer
-            .SendAsync(provider, recipient, subject, body, cancellationToken)
-            .ConfigureAwait(false);
-
-        await NotificationLogWriter
-            .AppendAsync(
-                logs,
-                provider,
-                NotificationPurposes.ProviderTest,
-                recipient.Value,
-                subject,
-                body,
-                delivery,
-                clock,
-                cancellationToken)
-            .ConfigureAwait(false);
-
-        return NotificationReplies.ToDto(delivery, $"测试邮件已发往 {recipient.Value}，去收件箱确认一下");
+        // 回一份最新状态：界面用它把"未配置"翻成"已配置"，
+        // 而不是自己改一份本地状态——那个标签的意义就在于它说的是服务端那边的事实
+        return await setupStatus.ExecuteAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<NotificationProvider> UpsertAsync(
@@ -191,5 +166,38 @@ public sealed class InitializeNotificationsUseCase(
         await providers.UpdateAsync(candidate, cancellationToken).ConfigureAwait(false);
 
         return candidate;
+    }
+}
+
+/// <summary>
+/// 首次初始化（第二步）：用**已保存**的通道发一封测试邮件。
+///
+/// 测的是库里那一份，不是界面上刚敲进去的——注册时用的也是库里那一份，
+/// 测别的没有意义（界面因此提示"改完记得先保存"）。
+///
+/// 复用跟单页那套 <see cref="SendTestNotificationUseCase"/>：它的职责就是
+/// "用某条通道发一封测试并把结果如实说出来"，这里只多一步"找到那条通道"。
+/// </summary>
+public sealed class SendSetupTestNotificationUseCase(
+    GetSetupStatusUseCase setupStatus,
+    INotificationProviderRepository providers,
+    SendTestNotificationUseCase sendTest)
+{
+    public async Task<NotificationDeliveryDto> ExecuteAsync(CancellationToken cancellationToken = default)
+    {
+        SetupStatusDto status = await setupStatus.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+
+        if (!status.NeedsSetup)
+        {
+            throw new ArgumentException("系统已经初始化过了，改通道请去「通知 → 提供商」", nameof(cancellationToken));
+        }
+
+        // 初始化阶段只维护一条通道（见 InitializeNotificationsUseCase），所以取最早的那条即可
+        NotificationProvider? provider = (await providers.ListAsync(cancellationToken).ConfigureAwait(false))
+            .OrderBy(p => p.Id)
+            .FirstOrDefault()
+            ?? throw new ArgumentException("通道还没保存，先把上面的参数保存下来", nameof(cancellationToken));
+
+        return await sendTest.ExecuteAsync(provider.Id, cancellationToken).ConfigureAwait(false);
     }
 }

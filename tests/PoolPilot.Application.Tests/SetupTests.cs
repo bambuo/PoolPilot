@@ -69,13 +69,11 @@ public sealed class SetupTests
     }
 
     [TestMethod]
-    public async Task Initialize_CreatesProviderPointsTemplateAndSendsTest()
+    public async Task Initialize_CreatesProviderAndPointsTemplate()
     {
         Harness h = new();
 
-        NotificationDeliveryDto delivery = await h.Initialize.ExecuteAsync(Request());
-
-        Assert.IsTrue(delivery.Delivered);
+        SetupStatusDto status = await h.Initialize.ExecuteAsync(Request());
 
         // 通道建出来了，而且是可用的
         NotificationProvider provider = Assert.ContainsSingle(h.Providers.Providers);
@@ -89,14 +87,55 @@ public sealed class SetupTests
         Assert.AreEqual(RegistrationPurpose, template.Purpose);
         Assert.AreEqual(provider.Id, template.ProviderId);
 
-        // 当场发了一封测试（并且留了记录）
+        // **保存不发信**：测试是另一个按钮的事（见下面的 SendTest 用例）
+        Assert.IsEmpty(h.Mailer.Sent);
+
+        // 参数随之配齐（理由为空）；但窗口仍开着——
+        // 关掉它的不是"通道配好了"，而是"第一个账号建出来了"
+        Assert.IsNull(status.Reason);
+        Assert.IsNull((await h.Status.ExecuteAsync()).Reason);
+    }
+
+    /// <summary>测试发信：用**已保存**的那条通道，并且留一条投递记录。</summary>
+    [TestMethod]
+    public async Task SendTest_UsesTheSavedProviderAndLogsIt()
+    {
+        Harness h = new();
+        await h.Initialize.ExecuteAsync(Request());
+
+        NotificationDeliveryDto delivery = await h.SendTest.ExecuteAsync();
+
+        Assert.IsTrue(delivery.Delivered);
         Assert.HasCount(1, h.Mailer.Sent);
+        StringAssert.Contains(h.Mailer.Sent[0].Subject, "通道测试");
+        Assert.AreEqual(h.Mailer.Sent[0].Recipient, h.Providers.Providers[0].FromAddress);
+
         Assert.HasCount(1, h.Logs.Entries);
         Assert.AreEqual(NotificationPurposes.ProviderTest, h.Logs.Entries[0].Purpose);
+    }
 
-        // 通道随之就绪（理由为空即"能发出去了"）；但窗口仍开着——
-        // 关掉它的不是"通道配好了"，而是"第一个账号建出来了"
-        Assert.IsNull((await h.Status.ExecuteAsync()).Reason);
+    /// <summary>还没保存就点测试：直接告诉使用者"先保存"，而不是拿一份不存在的配置去发。</summary>
+    [TestMethod]
+    public async Task SendTest_WithoutSavedProvider_IsRejected()
+    {
+        Harness h = new();
+
+        ArgumentException error = await Assert.ThrowsExactlyAsync<ArgumentException>(() => h.SendTest.ExecuteAsync());
+
+        StringAssert.Contains(error.Message, "还没保存");
+        Assert.IsEmpty(h.Mailer.Sent);
+    }
+
+    /// <summary>已经有账号之后，测试这条口子也跟着关上（它与保存同生共死）。</summary>
+    [TestMethod]
+    public async Task SendTest_OnInitializedSystem_IsRejected()
+    {
+        Harness h = new();
+        h.Users.Seed("someone@example.com", "correct horse");
+
+        ArgumentException error = await Assert.ThrowsExactlyAsync<ArgumentException>(() => h.SendTest.ExecuteAsync());
+
+        StringAssert.Contains(error.Message, "已经初始化过了");
     }
 
     /// <summary>参数不全时**不建通道**：留一条半残的通道会让下一次尝试以为已经配过了。</summary>
@@ -144,30 +183,6 @@ public sealed class SetupTests
         Assert.HasCount(1, h.Providers.Providers, "不该多出一条");
     }
 
-    /// <summary>
-    /// 口令填错时**不能**把初始化窗口关掉：通道静态看是"配齐"的，但码其实发不出去——
-    /// 那时若算作"已初始化"，人就卡在"注册要码、码发不出、初始化页进不去"上。
-    /// 所以窗口只看"有没有账号"，填错了可以反复改到通为止。
-    /// </summary>
-    [TestMethod]
-    public async Task Initialize_WithWrongPassword_KeepsTheSetupWindowOpen()
-    {
-        Harness h = new();
-        h.Mailer.NextDelivery = () => NotificationDelivery.Failed("认证失败：535");
-
-        NotificationDeliveryDto first = await h.Initialize.ExecuteAsync(Request());
-        Assert.IsFalse(first.Delivered);
-        StringAssert.Contains(first.Message, "535");
-
-        // 仍然可以再来一次（改口令），而不是被"已经初始化过了"挡回去
-        h.Mailer.NextDelivery = NotificationDelivery.Sent;
-        NotificationDeliveryDto second = await h.Initialize.ExecuteAsync(Request() with { Password = "改对的口令" });
-
-        Assert.IsTrue(second.Delivered);
-        Assert.HasCount(1, h.Providers.Providers, "两次尝试仍然是同一行");
-        Assert.AreEqual("改对的口令", h.Providers.Providers[0].Password);
-    }
-
     private static NotificationProviderUpsertDto Request() => new()
     {
         Kind = NotificationKinds.Email,
@@ -197,13 +212,11 @@ public sealed class SetupTests
         public Harness()
         {
             Status = new GetSetupStatusUseCase(Users, Templates, Providers);
-            Initialize = new InitializeNotificationsUseCase(
+            Initialize = new InitializeNotificationsUseCase(Status, Providers, Templates, Clock);
+            SendTest = new SendSetupTestNotificationUseCase(
                 Status,
                 Providers,
-                Templates,
-                Mailer,
-                Logs,
-                Clock);
+                new SendTestNotificationUseCase(Providers, Mailer, Logs, Clock));
         }
 
         public FakeClock Clock { get; } = new(new DateTimeOffset(2026, 10, 14, 9, 0, 0, TimeSpan.Zero));
@@ -221,5 +234,7 @@ public sealed class SetupTests
         public GetSetupStatusUseCase Status { get; }
 
         public InitializeNotificationsUseCase Initialize { get; }
+
+        public SendSetupTestNotificationUseCase SendTest { get; }
     }
 }

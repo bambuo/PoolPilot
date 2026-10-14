@@ -46,6 +46,10 @@ defineProps<{
 }
 
 .auth-card {
+  /* 同 .auth-page 的理由：Arco 没有全局 border-box，
+     不声明的话 `max-width` 只约束内容盒，实际外框还要再加上左右各 28px 的内边距
+     （实测写 460 渲染出来是 506）——这类"宽度差 46px"的偏差最难看出原因 */
+  box-sizing: border-box;
   width: 100%;
   max-width: 380px;
   padding: 28px 28px 24px;

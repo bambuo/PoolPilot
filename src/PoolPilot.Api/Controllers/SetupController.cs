@@ -21,7 +21,8 @@ namespace PoolPilot.Api.Controllers;
 [Route("api/setup")]
 public sealed class SetupController(
     GetSetupStatusUseCase setupStatus,
-    InitializeNotificationsUseCase initialize) : ControllerBase
+    InitializeNotificationsUseCase initialize,
+    SendSetupTestNotificationUseCase sendTest) : ControllerBase
 {
     /// <summary>系统是否还没初始化。前端据此决定"进站先给初始化页还是登录页"。</summary>
     [HttpGet("status")]
@@ -30,12 +31,15 @@ public sealed class SetupController(
         Ok(await setupStatus.ExecuteAsync(cancellationToken).ConfigureAwait(false));
 
     /// <summary>
-    /// 配通道 + 让注册验证码的样板指向它 + 当场发一封测试邮件。
+    /// 存下通道 + 让注册验证码的样板指向它。**不发测试邮件**——那是下一步
+    /// （<c>POST /api/setup/notifications/test</c>），界面把它做成两个按钮：
+    /// 保存只是写库，测试会真的往外发信。
+    ///
     /// 已经初始化过的系统调用它会回 400——那条路径没有第二个入口。
     /// </summary>
     [HttpPost("notifications")]
     [AllowAnonymous]
-    public async Task<ActionResult<NotificationDeliveryDto>> ConfigureNotifications(
+    public async Task<ActionResult<SetupStatusDto>> ConfigureNotifications(
         NotificationProviderUpsertDto request,
         CancellationToken cancellationToken = default)
     {
@@ -43,4 +47,14 @@ public sealed class SetupController(
 
         return Ok(await initialize.ExecuteAsync(request, cancellationToken).ConfigureAwait(false));
     }
+
+    /// <summary>
+    /// 用**已保存**的通道发一封测试邮件。发失败**不是 5xx**：结果里带着 SMTP 的原话，
+    /// 那正是使用者唯一需要看到的东西。通道还没保存过则回 400。
+    /// </summary>
+    [HttpPost("notifications/test")]
+    [AllowAnonymous]
+    public async Task<ActionResult<NotificationDeliveryDto>> SendTestNotification(
+        CancellationToken cancellationToken = default) =>
+        Ok(await sendTest.ExecuteAsync(cancellationToken).ConfigureAwait(false));
 }

@@ -44,14 +44,24 @@ public sealed class SetupApiTests
 
         Assert.AreEqual(HttpStatusCode.OK, configured.StatusCode);
 
-        NotificationDeliveryDto delivery = (await configured.Content.ReadFromJsonAsync<NotificationDeliveryDto>())!;
-        Assert.IsTrue(delivery.Delivered, delivery.Message);
+        // 保存**不发信**：它只写库 + 指样板
+        SetupStatusDto configuredStatus = (await configured.Content.ReadFromJsonAsync<SetupStatusDto>())!;
+        Assert.IsEmpty(app.Mailer.Sent, "保存这一步不该发信");
 
-        // 测试邮件是刚发的那一封
+        // 第二步：用已保存的通道发测试邮件
+        HttpResponseMessage tested = await client.PostAsync(
+            new Uri("/api/setup/notifications/test", UriKind.Relative),
+            content: null);
+
+        Assert.AreEqual(HttpStatusCode.OK, tested.StatusCode);
+
+        NotificationDeliveryDto delivery = (await tested.Content.ReadFromJsonAsync<NotificationDeliveryDto>())!;
+        Assert.IsTrue(delivery.Delivered, delivery.Message);
         Assert.HasCount(1, app.Mailer.Sent);
         StringAssert.Contains(app.Mailer.Sent[0].Subject, "通道测试");
+        Assert.IsNull(configuredStatus.Reason, "保存之后，发不出去的理由就该消失");
 
-        // 通道就绪：状态里的"发不出去"理由消失（但仍未初始化——还没有账号）
+        // 通道配齐：状态里的"发不出去"理由消失（但仍未初始化——还没有账号）
         SetupStatusDto status = (await client.GetFromJsonAsync<SetupStatusDto>(
             new Uri("/api/setup/status", UriKind.Relative)))!;
         Assert.IsTrue(status.NeedsSetup);
@@ -68,6 +78,22 @@ public sealed class SetupApiTests
         Assert.IsTrue(code.Delivered, "配好通道之后，注册验证码应当真的寄出去");
         Assert.HasCount(2, app.Mailer.Sent);
         StringAssert.Contains(app.Mailer.Sent[1].Subject, "注册验证码");
+    }
+
+    /// <summary>还没保存就点测试：告诉使用者"先保存"，而不是拿一份不存在的配置去发。</summary>
+    [TestMethod]
+    public async Task Test_WithoutSavedProvider_IsRejected()
+    {
+        using AuthTestApp app = new();
+        using HttpClient client = app.CreateClient();
+
+        HttpResponseMessage response = await client.PostAsync(
+            new Uri("/api/setup/notifications/test", UriKind.Relative),
+            content: null);
+
+        Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+        StringAssert.Contains(await response.Content.ReadAsStringAsync(), "还没保存");
+        Assert.IsEmpty(app.Mailer.Sent);
     }
 
     /// <summary>建出第一个账号之后，这条口子必须关上——否则它是一条绕过登录的配置入口。</summary>
