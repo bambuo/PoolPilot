@@ -98,10 +98,6 @@ async function sendTest(): Promise<void> {
   }
 }
 
-async function goToRegister(): Promise<void> {
-  await router.push({ name: 'register' })
-}
-
 async function skipSetup(): Promise<void> {
   skip()
   await router.push({ name: 'register' })
@@ -136,7 +132,13 @@ async function skipSetup(): Promise<void> {
             </p>
           </div>
 
-          <a-button v-if="notifyConfigured" type="primary" @click="goToRegister">去注册</a-button>
+          <!-- 与仓库里其它"去另一页"同一写法：主色 + 箭头，用 RouterLink（真实 `<a href>`，
+               可键盘聚焦、可用新标签页打开——Arco 的 a-link 不生成 href）。
+               它不再是实心按钮：这一页的主任务是上面那些初始化项，而"去注册"是做完之后的下一步；
+               两个实心按钮同屏，人得先分辨该按哪个 -->
+          <RouterLink v-if="notifyConfigured" class="next-step" :to="{ name: 'register' }">
+            去注册 →
+          </RouterLink>
         </div>
 
         <!-- ── 初始化项按"可折叠区"划分，一项一个区 ──────────────────
@@ -283,6 +285,20 @@ async function skipSetup(): Promise<void> {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+/* 下一步的链接：顶对齐标题那一行，与"这一页的结论"同层 */
+.next-step {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  font-size: 13px;
+  color: rgb(var(--primary-6));
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.next-step:hover {
+  text-decoration: underline;
 }
 
 .setup-title {
