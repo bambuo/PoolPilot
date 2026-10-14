@@ -617,3 +617,223 @@ public sealed class LiveOrderRepository(PoolPilotDbContext db) : ILiveOrderRepos
         return sources;
     }
 }
+
+/// <summary>登录账号的存档（EF Core + SQLite）。</summary>
+public sealed class UserRepository(PoolPilotDbContext db) : IUserRepository
+{
+    public async Task<User?> FindByEmailAsync(EmailAddress email, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(email);
+
+        UserRecord? row = await db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Email == email.Value, cancellationToken)
+            .ConfigureAwait(false);
+
+        return row?.ToDomain();
+    }
+
+    public async Task<User?> GetAsync(long id, CancellationToken cancellationToken = default)
+    {
+        UserRecord? row = await db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == id, cancellationToken)
+            .ConfigureAwait(false);
+
+        return row?.ToDomain();
+    }
+
+    public async Task<User> CreateAsync(User user, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        UserRecord row = UserRecord.FromDomain(user with { Id = 0L });
+        db.Users.Add(row);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return row.ToDomain();
+    }
+
+    public async Task UpdateAsync(User user, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        UserRecord row = await db.Users
+            .FirstOrDefaultAsync(u => u.Id == user.Id, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new ArgumentException($"账号 {user.Id} 不存在，无法更新", nameof(user));
+
+        // 只回写可变的那两列：邮箱与口令哈希没有"改"这个动作（改口令要走另一条流程，
+        // 那时它会有自己的用例与审计，而不是顺手在登录路径上更新）
+        row.TotpSecret = user.TotpSecret?.ToBase32();
+        row.TotpLastStep = user.TotpLastStep;
+
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+}
+
+/// <summary>通知通道的存档（EF Core + SQLite）。</summary>
+public sealed class NotificationProviderRepository(PoolPilotDbContext db) : INotificationProviderRepository
+{
+    public async Task<IReadOnlyList<NotificationProvider>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        List<NotificationProviderRecord> rows = await db.NotificationProviders
+            .AsNoTracking()
+            .OrderBy(p => p.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return [.. rows.Select(r => r.ToDomain())];
+    }
+
+    public async Task<NotificationProvider?> GetAsync(long id, CancellationToken cancellationToken = default)
+    {
+        NotificationProviderRecord? row = await db.NotificationProviders
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
+            .ConfigureAwait(false);
+
+        return row?.ToDomain();
+    }
+
+    public async Task<NotificationProvider> CreateAsync(
+        NotificationProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+
+        NotificationProviderRecord row = NotificationProviderRecord.FromDomain(provider with { Id = 0L });
+        db.NotificationProviders.Add(row);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return row.ToDomain();
+    }
+
+    public async Task UpdateAsync(NotificationProvider provider, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+
+        NotificationProviderRecord row = await db.NotificationProviders
+            .FirstOrDefaultAsync(p => p.Id == provider.Id, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new ArgumentException($"通知通道 {provider.Id} 不存在，无法更新", nameof(provider));
+
+        row.Kind = provider.Kind;
+        row.DisplayName = provider.DisplayName;
+        row.IsEnabled = provider.IsEnabled;
+        row.Host = provider.Host;
+        row.Port = provider.Port;
+        row.UseStartTls = provider.UseStartTls;
+        row.UserName = provider.UserName;
+        row.Password = provider.Password;
+        row.FromAddress = provider.FromAddress;
+        row.FromName = provider.FromName;
+
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DeleteAsync(long id, CancellationToken cancellationToken = default)
+    {
+        await db.NotificationProviders
+            .Where(p => p.Id == id)
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public Task<int> CountTemplatesUsingAsync(long id, CancellationToken cancellationToken = default) =>
+        db.NotificationTemplates.CountAsync(t => t.ProviderId == id, cancellationToken);
+}
+
+/// <summary>通知样板的存档（EF Core + SQLite）。</summary>
+public sealed class NotificationTemplateRepository(PoolPilotDbContext db) : INotificationTemplateRepository
+{
+    public async Task<IReadOnlyList<NotificationTemplate>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        List<NotificationTemplateRecord> rows = await db.NotificationTemplates
+            .AsNoTracking()
+            .OrderBy(t => t.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return [.. rows.Select(r => r.ToDomain())];
+    }
+
+    public async Task<NotificationTemplate?> FindByPurposeAsync(
+        string purpose,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(purpose);
+
+        NotificationTemplateRecord? row = await db.NotificationTemplates
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Purpose == purpose, cancellationToken)
+            .ConfigureAwait(false);
+
+        return row?.ToDomain();
+    }
+
+    public async Task<NotificationTemplate> CreateAsync(
+        NotificationTemplate notificationTemplate,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(notificationTemplate);
+
+        NotificationTemplateRecord row = NotificationTemplateRecord.FromDomain(notificationTemplate with { Id = 0L });
+        db.NotificationTemplates.Add(row);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return row.ToDomain();
+    }
+
+    public async Task UpdateAsync(
+        NotificationTemplate notificationTemplate,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(notificationTemplate);
+
+        NotificationTemplateRecord row = await db.NotificationTemplates
+            .FirstOrDefaultAsync(t => t.Id == notificationTemplate.Id, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new ArgumentException($"通知样板 {notificationTemplate.Id} 不存在，无法更新", nameof(notificationTemplate));
+
+        row.Subject = notificationTemplate.Subject;
+        row.Body = notificationTemplate.Body;
+        row.ProviderId = notificationTemplate.ProviderId;
+        row.UpdatedAtUtc = notificationTemplate.UpdatedAt.Utc;
+
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+}
+
+/// <summary>通知投递记录的存档（EF Core + SQLite）。只追加与读取。</summary>
+public sealed class NotificationLogRepository(PoolPilotDbContext db) : INotificationLogRepository
+{
+    public async Task AppendAsync(NotificationLog entry, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        db.NotificationLogs.Add(NotificationLogRecord.FromDomain(entry with { Id = 0L }));
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<NotificationLog>> ListAsync(
+        int limit,
+        string? purpose = null,
+        CancellationToken cancellationToken = default)
+    {
+        IQueryable<NotificationLogRecord> query = db.NotificationLogs.AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(purpose))
+        {
+            query = query.Where(l => l.Purpose == purpose);
+        }
+
+        List<NotificationLogRecord> rows = await query
+            .OrderByDescending(l => l.Id)
+            .Take(limit)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return [.. rows.Select(r => r.ToDomain())];
+    }
+}

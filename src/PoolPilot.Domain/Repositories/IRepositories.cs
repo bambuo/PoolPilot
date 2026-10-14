@@ -6,6 +6,85 @@ namespace PoolPilot.Domain.Repositories;
 /// <summary>某个池的信号统计（带单员列表用：累计条数与最近一条的时刻）。</summary>
 public sealed record PoolSignalStats(AccountIndex Pool, int Count, LighterTimestamp? LastSignalAt);
 
+/// <summary>
+/// 通知提供商的存档。
+///
+/// 允许同类多条：两个发信邮箱并存是常态（一个内部用一个对外用）。
+/// "发某类通知用哪条"由样板上的 <c>ProviderId</c> 决定，不是在这里挑一个"默认"。
+/// </summary>
+public interface INotificationProviderRepository
+{
+    Task<IReadOnlyList<NotificationProvider>> ListAsync(CancellationToken cancellationToken = default);
+
+    Task<NotificationProvider?> GetAsync(long id, CancellationToken cancellationToken = default);
+
+    Task<NotificationProvider> CreateAsync(
+        NotificationProvider provider,
+        CancellationToken cancellationToken = default);
+
+    Task UpdateAsync(NotificationProvider provider, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 删除。调用方必须先确认没有样板在用它——删掉通道而把样板留在原地，
+    /// 会造出"通知看着配好了、其实发不出去"的状态。
+    /// </summary>
+    Task DeleteAsync(long id, CancellationToken cancellationToken = default);
+
+    /// <summary>有多少样板引用了它（删除前检查用）。</summary>
+    Task<int> CountTemplatesUsingAsync(long id, CancellationToken cancellationToken = default);
+}
+
+/// <summary>通知样板的存档。一类通知一条。</summary>
+public interface INotificationTemplateRepository
+{
+    Task<IReadOnlyList<NotificationTemplate>> ListAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>按用途取；没有配过时返回 <c>null</c>（此时用代码里的默认样板）。</summary>
+    Task<NotificationTemplate?> FindByPurposeAsync(
+        string purpose,
+        CancellationToken cancellationToken = default);
+
+    Task<NotificationTemplate> CreateAsync(
+        NotificationTemplate notificationTemplate,
+        CancellationToken cancellationToken = default);
+
+    Task UpdateAsync(NotificationTemplate notificationTemplate, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// 通知记录的存档。只追加与读取——投递历史是事实，没有"改"和"删"这两个动作。
+/// </summary>
+public interface INotificationLogRepository
+{
+    Task AppendAsync(NotificationLog entry, CancellationToken cancellationToken = default);
+
+    /// <summary>按时间倒序读取（列表页只看最近若干条）。</summary>
+    Task<IReadOnlyList<NotificationLog>> ListAsync(
+        int limit,
+        string? purpose = null,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>登录账号的存档。
+///
+/// 读接口有两条：按邮箱（注册查重、登录验密码）与按主键（MFA 挑战里存的是 Id——
+/// 那时手上没有邮箱，也不该再从凭证里带上一个可变的东西）。
+/// </summary>
+public interface IUserRepository
+{
+    /// <summary>按归一化邮箱读取；不存在时返回 <c>null</c>。</summary>
+    Task<User?> FindByEmailAsync(EmailAddress email, CancellationToken cancellationToken = default);
+
+    /// <summary>按主键读取；不存在时返回 <c>null</c>。</summary>
+    Task<User?> GetAsync(long id, CancellationToken cancellationToken = default);
+
+    /// <summary>新建并返回带库分配主键的账号。</summary>
+    Task<User> CreateAsync(User user, CancellationToken cancellationToken = default);
+
+    /// <summary>更新可变字段（MFA 绑定与已用时间步）。</summary>
+    Task UpdateAsync(User user, CancellationToken cancellationToken = default);
+}
+
 /// <summary>持仓变化事件的存档。</summary>
 public interface IPoolEventRepository
 {

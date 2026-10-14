@@ -67,9 +67,8 @@ public sealed record ExchangeConfig
     public bool HasCredentials => ApiKey is not null && ApiSecret is not null;
 
     /// <summary>
-    /// 取尾号：不足 8 位时**不返回任何字符**（短 key 的尾号可能占其大半，
-    /// 那种"提示"就不是提示而是泄露了）。
+    /// 取尾号。规则与理由见 <see cref="Services.SecretHint"/>（不足 8 位时不给任何字符）。
+    /// 交易所凭据与通知通道的口令共用同一条规则——两处各写一遍，早晚会有一处松掉。
     /// </summary>
-    public static string? HintOf(string? plaintextKey) =>
-        plaintextKey is { Length: >= 8 } key ? key[^4..] : null;
+    public static string? HintOf(string? plaintextKey) => Services.SecretHint.Of(plaintextKey);
 }

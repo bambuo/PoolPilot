@@ -41,6 +41,14 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
             logger.LogError(ex, "上游请求失败：{Endpoint} HTTP {Status}", ex.Endpoint, ex.StatusCode);
             await WriteAsync(context, StatusCodes.Status502BadGateway, ex.Message).ConfigureAwait(false);
         }
+        // 本地限流（验证码重发冷却、登录失败锁定）：参数没错，是"现在不行、等一会儿可以"。
+        // 单独成一档回 429，而不是混进 400——界面据此说的话完全不同
+        // （一个是"改改再提交"，一个是"等 N 秒再来"）。
+        catch (AuthRateLimitedException ex)
+        {
+            logger.LogWarning(ex, "本地限流");
+            await WriteAsync(context, StatusCodes.Status429TooManyRequests, ex.Message).ConfigureAwait(false);
+        }
         catch (ArgumentException ex)
         {
             logger.LogWarning(ex, "参数错误");

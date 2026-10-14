@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 
 using PoolPilot.Api.Hubs;
@@ -9,6 +10,7 @@ using PoolPilot.Domain.Repositories;
 using Lighter.Net.Interfaces.Clients;
 
 using PoolPilot.Infrastructure.Lighter;
+using PoolPilot.Infrastructure.Auth;
 using PoolPilot.Infrastructure.Brokers;
 using PoolPilot.Infrastructure.Monitoring;
 using PoolPilot.Infrastructure.Persistence;
@@ -32,6 +34,46 @@ public sealed class Program
         builder.Services.AddControllers();
         builder.Services.AddOpenApi();
         builder.Services.AddSignalR();
+
+        // ── 登录与 MFA ──────────────────────────────────────────
+        // Cookie 会话（框架自带，零新增包）：HttpOnly 让前端脚本拿不到它，
+        // 前端因此没有"把令牌存在哪儿"这个决定要做。
+        builder.Services
+            .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+            .AddCookie(options =>
+            {
+                options.Cookie.Name = "poolpilot_session";
+                options.Cookie.HttpOnly = true;
+
+                // Lax 而不是 Strict：同源前端的所有请求都带得上它，
+                // 而从别处点进来的顶层跳转也仍然可用——Strict 会让后者丢会话。
+                options.Cookie.SameSite = SameSiteMode.Lax;
+
+                // 本机 http://localhost，没有 TLS 可谈。改成 Always 会让 Cookie 根本发不出去。
+                options.Cookie.SecurePolicy = CookieSecurePolicy.None;
+
+                options.ExpireTimeSpan = TimeSpan.FromDays(7);
+                options.SlidingExpiration = true;
+
+                // API 不该把 401 变成 302 跳某个登录页：前端需要的是能判断的状态码，
+                // 而不是一个"看起来请求成功了"的重定向后的登录页 HTML。
+                options.Events.OnRedirectToLogin = context =>
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    return context.Response.WriteAsJsonAsync(new { error = "未登录或会话已过期" });
+                };
+
+                options.Events.OnRedirectToAccessDenied = context =>
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    return context.Response.WriteAsJsonAsync(new { error = "没有权限" });
+                };
+            });
+
+        // 验证码、登录挑战、失败计数都是"几分钟内有效的临时状态"：
+        // 内存缓存够用（单进程、重启即失效反而是想要的），不落库。
+        builder.Services.AddMemoryCache();
+        builder.Services.AddSingleton(TimeProvider.System);
 
         // ── 交易所对接 ──────────────────────────────────────────
         // 一律走 CryptoClients.Net（AGENTS.md 里「第三方依赖最小化」的唯一例外）。
@@ -71,6 +113,12 @@ public sealed class Program
         builder.Services.AddScoped<IFollowerRepository, FollowerRepository>();
         builder.Services.AddScoped<IFollowerLedgerRepository, FollowerLedgerRepository>();
         builder.Services.AddScoped<ILiveOrderRepository, LiveOrderRepository>();
+        builder.Services.AddScoped<IUserRepository, UserRepository>();
+
+        // 通知：通道 / 样板 / 记录。口令与交易所凭据同一条约定（明文，见 EXCHANGES.md）
+        builder.Services.AddScoped<INotificationProviderRepository, NotificationProviderRepository>();
+        builder.Services.AddScoped<INotificationTemplateRepository, NotificationTemplateRepository>();
+        builder.Services.AddScoped<INotificationLogRepository, NotificationLogRepository>();
 
         // ── Lighter 客户端 ───────────────────────────────────────
         // 分两半（依据见 LighterPoolDataExtension 的类说明）：
@@ -113,6 +161,32 @@ public sealed class Program
         builder.Services.AddScoped<CreateExchangeUseCase>();
         builder.Services.AddScoped<UpdateExchangeUseCase>();
         builder.Services.AddScoped<DeleteExchangeUseCase>();
+
+        // ── 注册、登录与 MFA ────────────────────────────────────
+        // 三个"临时状态"的存放处都是单例（背后是同一个 IMemoryCache），
+        // 因为缓存本身是进程级的：注册成 Scoped 只会让每个请求多包一层壳。
+        builder.Services.AddSingleton<IRegistrationCodeStore, MemoryRegistrationCodeStore>();
+        builder.Services.AddSingleton<IMfaChallengeStore, MemoryMfaChallengeStore>();
+        builder.Services.AddSingleton<ILoginThrottle, MemoryLoginThrottle>();
+
+        // 投递器：用哪条通道由「通知 → 样板」决定（读库），这里的注册与配置无关
+        builder.Services.AddSingleton<INotificationMailer, NotificationMailer>();
+
+        builder.Services.AddScoped<RequestRegistrationCodeUseCase>();
+        builder.Services.AddScoped<RegisterUserUseCase>();
+        builder.Services.AddScoped<LoginUseCase>();
+        builder.Services.AddScoped<VerifyMfaLoginUseCase>();
+        builder.Services.AddScoped<BindMfaOnLoginUseCase>();
+        builder.Services.AddScoped<GetSessionUserUseCase>();
+
+        builder.Services.AddScoped<ListNotificationProvidersUseCase>();
+        builder.Services.AddScoped<CreateNotificationProviderUseCase>();
+        builder.Services.AddScoped<UpdateNotificationProviderUseCase>();
+        builder.Services.AddScoped<DeleteNotificationProviderUseCase>();
+        builder.Services.AddScoped<SendTestNotificationUseCase>();
+        builder.Services.AddScoped<ListNotificationTemplatesUseCase>();
+        builder.Services.AddScoped<UpdateNotificationTemplateUseCase>();
+        builder.Services.AddScoped<ListNotificationLogsUseCase>();
 
         // ── 实盘执行侧 ──────────────────────────────────────────
         // 目前只有币安 U 本位合约。上限由配置给出（LiveTrading 节），
@@ -176,21 +250,29 @@ public sealed class Program
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
 
+        // 顺序不能反：先认出"是谁"（认证），再判断"能不能"（授权）
+        app.UseAuthentication();
+        app.UseAuthorization();
+
         if (app.Environment.IsDevelopment())
         {
             app.MapOpenApi();
         }
 
-        app.MapControllers();
-        app.MapHub<MonitorHub>("/hubs/monitor");
+        // **一处收口**：控制器默认全部要登录，只有显式标了 AllowAnonymous 的端点例外
+        // （目前只有 AuthController 与下面的健康检查）。这样以后新增的控制器是"默认受保护"，
+        // 而不是"默认敞开、要靠人记得加属性"。
+        app.MapControllers().RequireAuthorization();
+        app.MapHub<MonitorHub>("/hubs/monitor").RequireAuthorization();
 
-        // 健康检查：供前端确认后端已就绪
+        // 健康检查：供前端确认后端已就绪。它必须在**登录之前**可访问——
+        // 前端的登录页也要能判断"后端起来了没有"。
         app.MapGet("/api/health", () => Results.Ok(new
         {
             status = "ok",
             service = "PoolPilot",
             upstream = LighterConstants.MainnetRestBaseUrl,
-        }));
+        })).AllowAnonymous();
 
         app.Run();
     }

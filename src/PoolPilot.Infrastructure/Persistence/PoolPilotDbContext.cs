@@ -8,6 +8,10 @@ using PoolPilot.Domain.ValueObjects;
 // 实体属性名 AccountIndex 会遮蔽同名类型，用别名消歧
 using AccountIdx = PoolPilot.Domain.ValueObjects.AccountIndex;
 
+// 同理：UserRecord 的属性名与这两个值对象同名
+using PasswordHashValue = PoolPilot.Domain.ValueObjects.PasswordHash;
+using TotpSecretValue = PoolPilot.Domain.ValueObjects.TotpSecret;
+
 namespace PoolPilot.Infrastructure.Persistence;
 
 /// <summary>
@@ -38,6 +42,16 @@ public sealed class PoolPilotDbContext(DbContextOptions<PoolPilotDbContext> opti
     public DbSet<SymbolMappingRecord> SymbolMappings => Set<SymbolMappingRecord>();
 
     public DbSet<LiveOrderRecord> LiveOrders => Set<LiveOrderRecord>();
+
+    /// <summary>登录账号。与上面那些业务表没有关系：那些说的是"交易所里发生了什么"。</summary>
+    public DbSet<UserRecord> Users => Set<UserRecord>();
+
+    /// <summary>通知通道、样板与投递记录（见 notification 三张表的说明）。</summary>
+    public DbSet<NotificationProviderRecord> NotificationProviders => Set<NotificationProviderRecord>();
+
+    public DbSet<NotificationTemplateRecord> NotificationTemplates => Set<NotificationTemplateRecord>();
+
+    public DbSet<NotificationLogRecord> NotificationLogs => Set<NotificationLogRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -131,6 +145,46 @@ public sealed class PoolPilotDbContext(DbContextOptions<PoolPilotDbContext> opti
 
             // 按跟单员取"最近若干条"是唯一的读法，索引跟着它建
             entity.HasIndex(e => new { e.FollowerId, e.Id });
+        });
+
+        // ── 通知：通道 / 样板 / 投递记录 ────────────────────────
+        // 三张表而不是一张：通道参数是"我有什么账号"（换一次 SMTP 账号所有通知一起换），
+        // 样板是"每类通知说什么"，记录是"当时实际发生了什么"（只追加，永不改写）。
+        // 合成一张的话，加第二类通知就要把 SMTP 参数抄第二遍，而历史记录也会被后续编辑污染。
+        modelBuilder.Entity<NotificationProviderRecord>(entity =>
+        {
+            entity.ToTable("notification_providers");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+        });
+
+        // 一类通知一条：用途唯一，否则"发注册码用哪条样板"就得靠排序去猜
+        modelBuilder.Entity<NotificationTemplateRecord>(entity =>
+        {
+            entity.ToTable("notification_templates");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.HasIndex(e => e.Purpose).IsUnique();
+        });
+
+        // 只追加。按时间倒序取最近若干条是唯一的读法，索引跟着它建
+        modelBuilder.Entity<NotificationLogRecord>(entity =>
+        {
+            entity.ToTable("notification_logs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.HasIndex(e => e.SentAtUtcTicks);
+        });
+
+        // ── 登录账号 ────────────────────────────────────────────
+        // 邮箱唯一：它同时是登录名，允许两条就是允许两个"同名账号"，登录时连该验谁的密码都说不清。
+        // 归一化（去空白 + 转小写）在 EmailAddress 里做，所以这里直接比字符串即可。
+        modelBuilder.Entity<UserRecord>(entity =>
+        {
+            entity.ToTable("users");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.HasIndex(e => e.Email).IsUnique();
         });
     }
 }
@@ -845,5 +899,268 @@ public sealed class SymbolMappingRecord
         Note = Note,
         CreatedAt = LighterTimestamp.FromMilliseconds(
             new DateTimeOffset(CreatedAtUtcTicks, TimeSpan.Zero).ToUnixTimeMilliseconds()),
+    };
+}
+
+/// <summary>
+/// 登录账号表行。
+///
+/// 两处列名与领域语义的对应值得写下来：
+/// · <c>PasswordHash</c> 存的是**带算法标签与迭代次数的完整编码**（见 PasswordHash），
+///   不是一个裸哈希——将来调大迭代次数时，老口令仍然验得过。
+/// · <c>TotpSecret</c> 为 NULL 表示"还没绑定 MFA"，不是"这个账号不用 MFA"。
+///   MFA 是强制的，这个字段没有"关掉"的取值。
+/// </summary>
+public sealed class UserRecord
+{
+    public long Id { get; set; }
+
+    /// <summary>已归一化（小写、去空白）的登录邮箱。</summary>
+    public string Email { get; set; } = string.Empty;
+
+    public string PasswordHash { get; set; } = string.Empty;
+
+    /// <summary>Base32 的 TOTP 密钥；NULL = 未绑定。</summary>
+    public string? TotpSecret { get; set; }
+
+    /// <summary>最近一次成功校验使用的时间步（防重放）。</summary>
+    public long? TotpLastStep { get; set; }
+
+    public long CreatedAtUtcTicks { get; set; }
+
+    public DateTimeOffset CreatedAtUtc
+    {
+        get => new(CreatedAtUtcTicks, TimeSpan.Zero);
+        set => CreatedAtUtcTicks = value.UtcTicks;
+    }
+
+    public static UserRecord FromDomain(User source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return new UserRecord
+        {
+            Id = source.Id,
+            Email = source.Email.Value,
+            PasswordHash = source.PasswordHash.Encoded,
+            TotpSecret = source.TotpSecret?.ToBase32(),
+            TotpLastStep = source.TotpLastStep,
+            CreatedAtUtc = source.CreatedAt.Utc,
+        };
+    }
+
+    public User ToDomain() => new()
+    {
+        Id = Id,
+        Email = EmailAddress.Parse(Email),
+        PasswordHash = PasswordHashValue.Parse(PasswordHash),
+        TotpSecret = TotpSecret is null ? null : TotpSecretValue.Parse(TotpSecret),
+        TotpLastStep = TotpLastStep,
+        CreatedAt = LighterTimestamp.FromMilliseconds(CreatedAtUtc.ToUnixTimeMilliseconds()),
+    };
+}
+
+/// <summary>
+/// 通知通道表行。邮箱（kind=email）用到的列目前就这些——
+/// 与 ExchangeConfig 同一种做法：一张表承载一种类型，用 Kind 区分，用不到的列留空。
+/// </summary>
+public sealed class NotificationProviderRecord
+{
+    public long Id { get; set; }
+
+    /// <summary><c>email</c>。</summary>
+    public string Kind { get; set; } = "email";
+
+    public string DisplayName { get; set; } = string.Empty;
+
+    public bool IsEnabled { get; set; }
+
+    public string? Host { get; set; }
+
+    public int Port { get; set; } = 587;
+
+    public bool UseStartTls { get; set; } = true;
+
+    public string? UserName { get; set; }
+
+    /// <summary>SMTP 口令（授权码）。**明文**，与交易所凭据同一条约定。</summary>
+    public string? Password { get; set; }
+
+    public string? FromAddress { get; set; }
+
+    public string FromName { get; set; } = "PoolPilot";
+
+    public long CreatedAtUtcTicks { get; set; }
+
+    public DateTimeOffset CreatedAtUtc
+    {
+        get => new(CreatedAtUtcTicks, TimeSpan.Zero);
+        set => CreatedAtUtcTicks = value.UtcTicks;
+    }
+
+    public static NotificationProviderRecord FromDomain(NotificationProvider source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return new NotificationProviderRecord
+        {
+            Id = source.Id,
+            Kind = source.Kind,
+            DisplayName = source.DisplayName,
+            IsEnabled = source.IsEnabled,
+            Host = source.Host,
+            Port = source.Port,
+            UseStartTls = source.UseStartTls,
+            UserName = source.UserName,
+            Password = source.Password,
+            FromAddress = source.FromAddress,
+            FromName = source.FromName,
+            CreatedAtUtc = source.CreatedAt.Utc,
+        };
+    }
+
+    public NotificationProvider ToDomain() => new()
+    {
+        Id = Id,
+        Kind = Kind,
+        DisplayName = DisplayName,
+        IsEnabled = IsEnabled,
+        Host = Host,
+        Port = Port,
+        UseStartTls = UseStartTls,
+        UserName = UserName,
+        Password = Password,
+        FromAddress = FromAddress,
+        FromName = FromName,
+        CreatedAt = LighterTimestamp.FromMilliseconds(CreatedAtUtc.ToUnixTimeMilliseconds()),
+    };
+}
+
+/// <summary>通知样板表行。一类通知一条（Purpose 唯一）。</summary>
+public sealed class NotificationTemplateRecord
+{
+    public long Id { get; set; }
+
+    /// <summary><c>registration_code</c>。</summary>
+    public string Purpose { get; set; } = string.Empty;
+
+    public string DisplayName { get; set; } = string.Empty;
+
+    public string Subject { get; set; } = string.Empty;
+
+    public string Body { get; set; } = string.Empty;
+
+    /// <summary>用哪条通道发；NULL = 还没选。</summary>
+    public long? ProviderId { get; set; }
+
+    public long UpdatedAtUtcTicks { get; set; }
+
+    public DateTimeOffset UpdatedAtUtc
+    {
+        get => new(UpdatedAtUtcTicks, TimeSpan.Zero);
+        set => UpdatedAtUtcTicks = value.UtcTicks;
+    }
+
+    public static NotificationTemplateRecord FromDomain(NotificationTemplate source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return new NotificationTemplateRecord
+        {
+            Id = source.Id,
+            Purpose = source.Purpose,
+            DisplayName = source.DisplayName,
+            Subject = source.Subject,
+            Body = source.Body,
+            ProviderId = source.ProviderId,
+            UpdatedAtUtc = source.UpdatedAt.Utc,
+        };
+    }
+
+    public NotificationTemplate ToDomain() => new()
+    {
+        Id = Id,
+        Purpose = Purpose,
+        DisplayName = DisplayName,
+        Subject = Subject,
+        Body = Body,
+        ProviderId = ProviderId,
+        UpdatedAt = LighterTimestamp.FromMilliseconds(UpdatedAtUtc.ToUnixTimeMilliseconds()),
+    };
+}
+
+/// <summary>
+/// 通知投递记录表行。
+///
+/// 通道信息存的是**快照**（显示名、类型），不是靠外键现查：通道改名或删除之后，
+/// 这条记录仍要能说清"当时用的是谁"。<c>ProviderId</c> 只作参考，可能指向已删除的行。
+/// </summary>
+public sealed class NotificationLogRecord
+{
+    public long Id { get; set; }
+
+    public string Purpose { get; set; } = string.Empty;
+
+    public long? ProviderId { get; set; }
+
+    public string ProviderName { get; set; } = string.Empty;
+
+    public string Kind { get; set; } = "email";
+
+    public string Recipient { get; set; } = string.Empty;
+
+    public string Subject { get; set; } = string.Empty;
+
+    public string Body { get; set; } = string.Empty;
+
+    public bool Delivered { get; set; }
+
+    public bool LogFallback { get; set; }
+
+    public string? Error { get; set; }
+
+    public long SentAtUtcTicks { get; set; }
+
+    public DateTimeOffset SentAtUtc
+    {
+        get => new(SentAtUtcTicks, TimeSpan.Zero);
+        set => SentAtUtcTicks = value.UtcTicks;
+    }
+
+    public static NotificationLogRecord FromDomain(NotificationLog source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return new NotificationLogRecord
+        {
+            Id = source.Id,
+            Purpose = source.Purpose,
+            ProviderId = source.ProviderId,
+            ProviderName = source.ProviderName,
+            Kind = source.Kind,
+            Recipient = source.Recipient,
+            Subject = source.Subject,
+            Body = source.Body,
+            Delivered = source.Delivered,
+            LogFallback = source.LogFallback,
+            Error = source.Error,
+            SentAtUtc = source.SentAt.Utc,
+        };
+    }
+
+    public NotificationLog ToDomain() => new()
+    {
+        Id = Id,
+        Purpose = Purpose,
+        ProviderId = ProviderId,
+        ProviderName = ProviderName,
+        Kind = Kind,
+        Recipient = Recipient,
+        Subject = Subject,
+        Body = Body,
+        Delivered = Delivered,
+        LogFallback = LogFallback,
+        Error = Error,
+        SentAt = LighterTimestamp.FromMilliseconds(SentAtUtc.ToUnixTimeMilliseconds()),
     };
 }
