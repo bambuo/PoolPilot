@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
+import { IconClockCircle, IconEmail, IconFile } from '@arco-design/web-vue/es/icon'
 
 import {
   notificationApi,
@@ -303,7 +304,11 @@ onMounted(loadAll)
 
       <a-tabs v-model:active-key="tab">
         <!-- ── 提供商 ────────────────────────────────── -->
-        <a-tab-pane key="providers" title="提供商">
+        <a-tab-pane key="providers">
+          <!-- 图标与侧栏同一套理由：一屏能看到全部功能的地方，"想起这页是干什么的"靠它。
+               信封印在"提供商"上是因为现在只有邮箱这一种通道；真加了第二种，
+               这里要换成更中性的图标，而不是让信封去兼任"通道" -->
+          <template #title><IconEmail class="tab-icon" /> 提供商</template>
           <div class="provider-grid">
             <button
               v-for="provider in providers"
@@ -365,7 +370,8 @@ onMounted(loadAll)
         </a-tab-pane>
 
         <!-- ── 样板 ──────────────────────────────────── -->
-        <a-tab-pane key="templates" title="样板">
+        <a-tab-pane key="templates">
+          <template #title><IconFile class="tab-icon" /> 样板</template>
           <div v-for="template in templates" :key="template.purpose" class="template-card">
             <div class="template-head">
               <span class="template-name">{{ template.displayName }}</span>
@@ -419,7 +425,8 @@ onMounted(loadAll)
         </a-tab-pane>
 
         <!-- ── 记录 ──────────────────────────────────── -->
-        <a-tab-pane key="logs" title="记录">
+        <a-tab-pane key="logs">
+          <template #title><IconClockCircle class="tab-icon" /> 记录</template>
           <div v-if="logsLoaded && logs.length === 0" class="empty-line">还没有发出过任何通知。</div>
 
           <a-table
@@ -582,6 +589,13 @@ onMounted(loadAll)
 </template>
 
 <style scoped>
+/* 标签页图标比文字小一档并与文字同色：它是提示，不是主角 */
+.tab-icon {
+  margin-right: 4px;
+  font-size: 14px;
+  color: inherit;
+}
+
 .page-note {
   margin-bottom: 12px;
   font-size: 12px;

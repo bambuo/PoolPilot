@@ -137,19 +137,6 @@ function isActive(item: NavItem): boolean {
         </RouterLink>
       </nav>
 
-      <!-- 当前账号与退出登录。放在主题开关左边：它是"我是谁"，
-           与"怎么显示"是两件事，但都属于顶栏右侧那一组 -->
-      <a-dropdown v-if="user" trigger="click" class="user-menu">
-        <button type="button" class="user-button" :title="user.email">
-          <IconUser class="user-icon" />
-          <span class="user-email">{{ user.email }}</span>
-        </button>
-
-        <template #content>
-          <a-doption :disabled="signingOut" @click="signOut">退出登录</a-doption>
-        </template>
-      </a-dropdown>
-
       <!-- 主题开关。按钮上只有图标、没有文字，名字必须由 aria-label 给出——
            读屏读的是"切换到深色主题"，而不是一个没有名字的按钮 -->
       <button
@@ -161,6 +148,26 @@ function isActive(item: NavItem): boolean {
       >
         <component :is="theme === 'dark' ? IconSun : IconMoon" />
       </button>
+
+      <!-- 账号：只放一个图标，**不显示邮箱**——顶栏是导航，不是一个"我是谁"的展示位；
+           邮箱进 title（悬停可见）而不是占一行宽度。菜单里的项以后会长（个人信息、切换账号…），
+           所以从现在起就按"点开是一张菜单"来组织 -->
+      <a-dropdown v-if="user" trigger="click" class="user-menu">
+        <!-- title/aria-label 挂在 button 上而不是外层下拉：Arco 的 dropdown 不把
+             `title` 透到 DOM，挂外层等于没有提示（这一步实测踩过） -->
+        <button
+          type="button"
+          class="user-button"
+          :title="`当前登录：${user.email}`"
+          :aria-label="`账号（当前登录：${user.email}）`"
+        >
+          <IconUser class="user-icon" />
+        </button>
+
+        <template #content>
+          <a-doption :disabled="signingOut" @click="signOut">退出登录</a-doption>
+        </template>
+      </a-dropdown>
     </header>
 
     <a-layout-content class="content">
@@ -249,20 +256,16 @@ function isActive(item: NavItem): boolean {
   border-bottom-color: rgb(var(--primary-6));
 }
 
-/* 账号菜单：margin-left: auto 把"账号 + 主题"这一组推到最右，导航保持靠左排布 */
-.user-menu {
-  margin-left: auto;
-}
-
+/* 账号按钮与主题开关同一形制：一个图标、无边框、悬停一层浅底。
+   顺序是主题在前、账号在后——账号是这条右侧控件带的最后一个 */
 .user-button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  max-width: 150px;
+  justify-content: center;
+  width: 30px;
   height: 30px;
-  padding: 0 8px;
+  padding: 0;
   font: inherit;
-  font-size: 13px;
   color: var(--color-text-3);
   background: transparent;
   border: 0;
@@ -277,14 +280,7 @@ function isActive(item: NavItem): boolean {
 }
 
 .user-icon {
-  font-size: 15px;
-}
-
-/* 邮箱可能很长：截断而不是把顶栏撑变形，全名走 title 提示 */
-.user-email {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 16px;
 }
 
 /* 主题开关：顶栏是手写样式（见文件顶部说明），按钮也一样手写——
