@@ -268,28 +268,80 @@ export interface MonitorConfig {
   hubUrl: string
 }
 
+/// 请求失败。**带上状态码**——调用方常常需要区分"没登录"（401）与其他失败，
+/// 而此前只有一句话，连 401 都只能靠文案去猜。
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+/// 未登录时的统一出口。由 `useSession` 在启动时挂上（清会话 + 跳登录页）。
+///
+/// 放在这里而不是让 client 直接 import 路由：请求层不该知道页面存在，
+/// 而"401 之后去哪儿"是界面的事。**环形依赖**也由此避开（router → view → client → router）。
+let onUnauthorized: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler
+}
+
+/// 统一的失败处理：把后端的 { error } 翻成异常，并接上 401 的出口。
+/// 抽出来是因为"不解析响应体"的请求也要走同一套——两条路径各写一遍，
+/// 早晚会有一条忘了处理 401。
+async function ensureOk(response: Response): Promise<void> {
+  if (response.ok) {
+    return
+  }
+
+  let detail = `HTTP ${response.status}`
+
+  try {
+    const body = (await response.json()) as { error?: string }
+    if (body.error) {
+      detail = body.error
+    }
+  } catch {
+    // 响应不是 JSON（例如 204 或反向代理的 HTML 错误页），沿用状态码描述
+  }
+
+  if (response.status === 401) {
+    onUnauthorized?.()
+  }
+
+  throw new ApiError(response.status, detail)
+}
+
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { accept: 'application/json' },
+    // 会话在 Cookie 里（HttpOnly，脚本读不到），所以每个请求都要带上它。
+    // same-origin 是 fetch 的默认值，这里写明是因为"少了它整站 401"这种故障太难查
+    credentials: 'same-origin',
     ...init,
   })
 
-  if (!response.ok) {
-    let detail = `HTTP ${response.status}`
-
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        detail = body.error
-      }
-    } catch {
-      // 响应不是 JSON，沿用状态码描述
-    }
-
-    throw new Error(detail)
-  }
+  await ensureOk(response)
 
   return (await response.json()) as T
+}
+
+/// 发一个**没有响应体**的请求（204 或空 200）。
+///
+/// 与 getJson 分开而不是给它加个开关：空体上去 `response.json()` 会抛
+/// "Unexpected end of JSON input"——那句话既不提是哪个接口，也不提是空体的问题。
+async function sendWithoutBody(path: string, init?: RequestInit): Promise<void> {
+  const response = await fetch(path, {
+    headers: { accept: 'application/json' },
+    credentials: 'same-origin',
+    ...init,
+  })
+
+  await ensureOk(response)
 }
 
 export const api = {
@@ -901,4 +953,176 @@ export interface SymbolMappingPayload {
   /** 源侧价格。**不要传 undefined**：项目开了 exactOptionalPropertyTypes，显式 undefined 与"不传"是两回事。 */
   sourcePrice?: number
   note?: string
+}
+
+// ── 会话与登录（MFA 强制）──────────────────────────────────
+//
+// 会话本身在 Cookie 里（HttpOnly），前端没有"令牌"这个东西要存——
+// 这里只保留"当前是谁"这份用于渲染的信息，退出登录时清掉它即可。
+
+export interface Session {
+  userId: number
+  email: string
+}
+
+/// 登录第一步的答复：下一步做什么，而不是"登录成功"。
+export interface LoginChallenge {
+  /** `mfaRequired` = 已绑令牌，直接输码；`mfaBindingRequired` = 还没绑，先扫码。 */
+  status: 'mfaRequired' | 'mfaBindingRequired'
+  challengeId: string
+  /** 待绑定的密钥（Base32）；仅待绑定时有值。 */
+  secret: string | null
+  /** 前端据此画二维码；仅待绑定时有值。 */
+  otpauthUri: string | null
+}
+
+/// 一次投递的结果。三种情形分开说：发了没有 / 是不是只进了日志 / 失败原因。
+export interface NotificationDelivery {
+  delivered: boolean
+  logFallback: boolean
+  error: string | null
+  message: string
+}
+
+export interface NotificationProvider {
+  id: number
+  kind: string
+  displayName: string
+  isEnabled: boolean
+  host: string | null
+  port: number
+  useStartTls: boolean
+  userName: string | null
+  /** 口令尾号；界面上只用来确认"配的是哪一条"。 */
+  passwordHint: string | null
+  fromAddress: string | null
+  fromName: string
+  isUsable: boolean
+}
+
+export interface NotificationProviderPayload {
+  kind: string
+  displayName: string
+  isEnabled: boolean
+  host: string | null
+  port: number
+  useStartTls: boolean
+  userName: string | null
+  /** 口令三态：不传 = 保持原样，空串 = 清除，传值 = 换新（与交易所凭据同一规则）。 */
+  password?: string | null
+  fromAddress: string | null
+  fromName: string
+}
+
+export interface NotificationTemplate {
+  purpose: string
+  displayName: string
+  subject: string
+  body: string
+  providerId: number | null
+  /** false = 现在用的是代码里的默认样板（还没被改过）。 */
+  isCustomized: boolean
+  defaultSubject: string
+  defaultBody: string
+  /** 正文里必须保留的占位符。 */
+  requiredPlaceholders: string[]
+}
+
+export interface NotificationLogEntry {
+  id: number
+  purpose: string
+  purposeName: string
+  providerId: number | null
+  providerName: string
+  kind: string
+  recipient: string
+  subject: string
+  body: string
+  delivered: boolean
+  logFallback: boolean
+  error: string | null
+  sentAt: string
+}
+
+export const authApi = {
+  /** 当前会话。未登录时抛 401 的 ApiError（由 useSession 接住）。 */
+  me: () => getJson<Session>('/api/auth/me'),
+
+  sendRegistrationCode: (email: string) =>
+    getJson<NotificationDelivery>('/api/auth/register/code', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email }),
+    }),
+
+  /// 注册成功没有响应体（后端回 204）——它不签发会话，也没什么可回的。
+  register: (payload: { email: string; code: string; password: string; confirmPassword: string }) =>
+    sendWithoutBody('/api/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  login: (payload: { email: string; password: string }) =>
+    getJson<LoginChallenge>('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  /** 已绑定：六位码换会话。 */
+  verifyMfa: (payload: { challengeId: string; code: string }) =>
+    getJson<Session>('/api/auth/mfa/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  /** 未绑定：验过码即完成绑定，并换到会话。 */
+  bindMfa: (payload: { challengeId: string; code: string }) =>
+    getJson<Session>('/api/auth/mfa/bind', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  logout: async (): Promise<void> => {
+    await fetch('/api/auth/logout', { method: 'POST' })
+  },
+}
+
+export const notificationApi = {
+  providers: () => getJson<NotificationProvider[]>('/api/notifications/providers'),
+
+  createProvider: (payload: NotificationProviderPayload) =>
+    getJson<NotificationProvider>('/api/notifications/providers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  updateProvider: (id: number, payload: NotificationProviderPayload) =>
+    getJson<NotificationProvider>(`/api/notifications/providers/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  deleteProvider: (id: number) =>
+    sendWithoutBody(`/api/notifications/providers/${id}`, { method: 'DELETE' }),
+
+  /** 用这条通道发一封测试邮件。发失败也是 200，结果里带着 SMTP 的原话。 */
+  testProvider: (id: number) =>
+    getJson<NotificationDelivery>(`/api/notifications/providers/${id}/test`, { method: 'POST' }),
+
+  templates: () => getJson<NotificationTemplate[]>('/api/notifications/templates'),
+
+  updateTemplate: (purpose: string, payload: { subject: string; body: string; providerId: number | null }) =>
+    getJson<NotificationTemplate>(`/api/notifications/templates/${purpose}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  logs: () => getJson<NotificationLogEntry[]>('/api/notifications/logs'),
 }

@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { useSession } from '@/composables/useSession'
+
 import PoolList from '@/views/PoolList.vue'
 
 /// 路由表。惰性加载非首屏页面。
@@ -10,6 +12,28 @@ import PoolList from '@/views/PoolList.vue'
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    // ── 公开页（不需要登录）────────────────────────────────
+    // 这三页共用同一个"没有顶栏"的外壳，见 App.vue；`meta.public` 是唯一的判据，
+    // 路由守卫也读它——两处各写一份清单，早晚会有一处漏掉新页面。
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: { public: true },
+    },
+    {
+      path: '/register',
+      name: 'register',
+      component: () => import('@/views/RegisterView.vue'),
+      meta: { public: true },
+    },
+    {
+      // 第二步：已绑定输六位码、未绑定扫码 + 输码，两种状态同一页
+      path: '/mfa',
+      name: 'mfa',
+      component: () => import('@/views/MfaView.vue'),
+      meta: { public: true },
+    },
     { path: '/', redirect: '/graph' },
     {
       path: '/graph',
@@ -63,6 +87,13 @@ export const router = createRouter({
       name: 'backtest',
       component: () => import('@/views/BacktestView.vue'),
     },
+    // 通知：通道（提供商）/ 样板 / 投递记录。三块在同一页的三个标签下——
+    // 它们描述同一件事的三个面（谁能发、发什么、发了什么），拆成三个路由只多三处入口。
+    {
+      path: '/notifications',
+      name: 'notifications',
+      component: () => import('@/views/NotificationView.vue'),
+    },
     {
       path: '/pools/:accountIndex',
       name: 'pool-detail',
@@ -76,4 +107,36 @@ export const router = createRouter({
     // 使用者看到的是"导航在、内容空白"的白屏，比跳错页更难判断。
     { path: '/:pathMatch(.*)*', redirect: '/graph' },
   ],
+})
+
+/// 全局守卫：**默认要登录**，只有 `meta.public` 的页面例外。
+///
+/// 默认拒而不是默认许：新增页面时忘记标记，结果是"进不去"（一次点击就能发现），
+/// 而不是"没登录也能看"（往往没人发现）。
+router.beforeEach(async (to) => {
+  const { user, loaded, load, redirectAfterLogin } = useSession()
+
+  // 会话只问一次：它是服务端说了算的状态，但没必要每次跳转都打一遍 /me。
+  // 之后由 401 统一处理负责纠正（见 main.ts 的 bindUnauthorizedHandler）。
+  if (!loaded.value) {
+    await load()
+  }
+
+  const isPublic = to.meta.public === true
+
+  if (!isPublic && user.value === null) {
+    // 记下想去的地方，登录成功后回跳——但**只接受站内路径**，
+    // 免得一个构造出来的 url 查询参数把刚登录的人带去别处
+    redirectAfterLogin.value = to.fullPath.startsWith('/') && !to.fullPath.startsWith('//') ? to.fullPath : null
+
+    return { name: 'login' }
+  }
+
+  if (isPublic && user.value !== null && to.name !== 'mfa') {
+    // 已登录的人不该停在登录/注册页；但 MFA 第二步例外——
+    // 那时会话刚签发、而挑战还没用完（绑定同理）
+    return { name: 'graph' }
+  }
+
+  return true
 })

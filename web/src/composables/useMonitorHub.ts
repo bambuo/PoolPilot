@@ -115,6 +115,24 @@ function ensureConnection(): Promise<void> {
   return starting
 }
 
+/// 断开监控连接。**退出登录时必须调用**。
+///
+/// 这条连接带着会话 Cookie 建起来，登出之后服务端已经认不出它了：
+/// 不主动断开，浏览器会带着一条已经没有身份的连接反复自动重连，
+/// 服务端那边则是一串 401——看上去像后端出了问题。
+export async function disconnectMonitorHub(): Promise<void> {
+  const current = connection
+
+  connection = null
+  starting = null
+
+  if (current !== null) {
+    await current.stop()
+  }
+
+  state.value = 'disconnected'
+}
+
 /// 订阅某个实盘跟单员的账户快照。组件卸载时自动退订。
 export function useLiveAccount(
   followerId: Ref<string>,

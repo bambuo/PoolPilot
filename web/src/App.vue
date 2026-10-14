@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { computed, type Component } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { computed, ref, type Component } from 'vue'
+import { Message } from '@arco-design/web-vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
+import { authApi } from '@/api/client'
+import { disconnectMonitorHub } from '@/composables/useMonitorHub'
+import { useSession } from '@/composables/useSession'
 import { useTheme } from '@/composables/useTheme'
 
 // 图标按需导入（与 HeaderHint 里的用法一致：不全局注册，用到哪几个进哪几个）
@@ -15,6 +19,8 @@ import {
   IconRelation,
   IconScan,
   IconStorage,
+  IconNotification,
+  IconUser,
   IconUserGroup,
 } from '@arco-design/web-vue/es/icon'
 
@@ -56,9 +62,38 @@ const navItems: readonly NavItem[] = [
   { to: '/feasibility', label: '规模门槛', icon: IconFilter },
   // 回测＝拿历史数据跑一遍
   { to: '/backtest', label: '回测面板', icon: IconHistory },
+  // 通知＝系统往外发的消息（谁能发 / 发什么 / 发了什么），铃铛是最不容易误读的一个
+  { to: '/notifications', label: '通知', icon: IconNotification },
 ]
 
 const route = useRoute()
+const router = useRouter()
+const { user, clear: clearSession } = useSession()
+
+/// 公开页（登录 / 注册 / MFA）不套工作台外壳：那时还没有"当前用户"，
+/// 一排导航点进去只会被守卫弹回登录页。判据与路由守卫共用同一处 meta。
+const isPublicPage = computed(() => route.meta.public === true)
+
+const signingOut = ref(false)
+
+async function signOut(): Promise<void> {
+  signingOut.value = true
+
+  try {
+    await authApi.logout()
+
+    // 先断开监控连接再清会话：那条连接带着刚才的 Cookie，
+    // 留着它会在服务端变成一串没人认领的 401
+    await disconnectMonitorHub()
+    clearSession()
+
+    await router.push({ name: 'login' })
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '退出登录失败')
+  } finally {
+    signingOut.value = false
+  }
+}
 
 // 主题：开关在顶栏最右。整页跟着 Arco 的暗色属性翻转，配色令牌的说明见 useTheme
 const { theme, toggle: toggleTheme } = useTheme()
@@ -77,7 +112,10 @@ function isActive(item: NavItem): boolean {
 </script>
 
 <template>
-  <a-layout class="shell">
+  <!-- 公开页（登录 / 注册 / MFA）：只有一份居中的卡片，没有顶栏与导航 -->
+  <RouterView v-if="isPublicPage" />
+
+  <a-layout v-else class="shell">
     <header class="topbar">
       <!-- 标志与文字同一个链接般的整体：图 + 名。标记本身纯装饰（名字就在旁边），
            所以 alt 留空并 aria-hidden——屏幕阅读器读两遍"PoolPilot"没有意义 -->
@@ -98,6 +136,19 @@ function isActive(item: NavItem): boolean {
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
+
+      <!-- 当前账号与退出登录。放在主题开关左边：它是"我是谁"，
+           与"怎么显示"是两件事，但都属于顶栏右侧那一组 -->
+      <a-dropdown v-if="user" trigger="click" class="user-menu">
+        <button type="button" class="user-button" :title="user.email">
+          <IconUser class="user-icon" />
+          <span class="user-email">{{ user.email }}</span>
+        </button>
+
+        <template #content>
+          <a-doption :disabled="signingOut" @click="signOut">退出登录</a-doption>
+        </template>
+      </a-dropdown>
 
       <!-- 主题开关。按钮上只有图标、没有文字，名字必须由 aria-label 给出——
            读屏读的是"切换到深色主题"，而不是一个没有名字的按钮 -->
@@ -127,9 +178,13 @@ function isActive(item: NavItem): boolean {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 32px;
+
+  /* 加了「通知」与账号菜单之后，1280px 宽的窗口里导航会被挤到换行——
+     换行后的顶栏是一团两行文字，比缺一项还难看。间距收到 20px，
+     并让下面的导航项与账号按钮各自「不再折行、放不下就截断」 */
+  gap: 20px;
   height: 56px;
-  padding: 0 24px;
+  padding: 0 20px;
 
   /* 底色取令牌，跟着主题走（暗色下是 #232324，与原来那段写死的深灰几乎一致）。
      描边是必须的：浅色主题下顶栏与内容区都是浅色，没有这条线两者会连成一片 */
@@ -166,7 +221,9 @@ function isActive(item: NavItem): boolean {
   align-items: center;
   gap: 6px;
   height: 100%;
-  padding: 0 14px;
+  padding: 0 10px;
+  /* 标签不许折行：「总览」被挤成「总 / 览」两行是这一版顶栏踩过的坑 */
+  white-space: nowrap;
   color: var(--color-text-3);
   font-size: 14px;
   text-decoration: none;
@@ -192,9 +249,46 @@ function isActive(item: NavItem): boolean {
   border-bottom-color: rgb(var(--primary-6));
 }
 
+/* 账号菜单：margin-left: auto 把"账号 + 主题"这一组推到最右，导航保持靠左排布 */
+.user-menu {
+  margin-left: auto;
+}
+
+.user-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 150px;
+  height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-text-3);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.user-button:hover {
+  color: var(--color-text-1);
+  background: var(--color-fill-2);
+}
+
+.user-icon {
+  font-size: 15px;
+}
+
+/* 邮箱可能很长：截断而不是把顶栏撑变形，全名走 title 提示 */
+.user-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 主题开关：顶栏是手写样式（见文件顶部说明），按钮也一样手写——
-   用 Arco 的按钮组件会让它的字色跟着主题走，而顶栏**在两个主题下都是深色**。
-   margin-left: auto 把它推到最右，导航保持原来的靠左排布 */
+   用 Arco 的按钮组件会让它的字色跟着主题走，而顶栏**在两个主题下都是深色** */
 .theme-toggle {
   display: inline-flex;
   align-items: center;
