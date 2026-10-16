@@ -301,9 +301,13 @@ async function ensureOk(response: Response): Promise<void> {
   let detail = `HTTP ${response.status}`
 
   try {
-    const body = (await response.json()) as { error?: string }
-    if (body.error) {
-      detail = body.error
+    const body = (await response.json()) as { error?: string; message?: string }
+
+    // 后端两种键都在用：既有接口是 `error`，菜单删除的拒因契约写的是 `message`。
+    // 两处都收，免得一条 400 的说明退化成"HTTP 400"这句没有信息量的话。
+    const text = body.error ?? body.message
+    if (text) {
+      detail = text
     }
   } catch {
     // 响应不是 JSON（例如 204 或反向代理的 HTML 错误页），沿用状态码描述
@@ -342,6 +346,15 @@ async function sendWithoutBody(path: string, init?: RequestInit): Promise<void> 
   })
 
   await ensureOk(response)
+}
+
+/// DELETE 一个资源（无响应体）。
+///
+/// 单列一个助手而不是每次现写 `fetch(..., { method: 'DELETE' })`：那几处裸 fetch
+/// **绕过了 ensureOk**，于是 401 不会触发登出、失败被当成成功——四种删除各写一遍，
+/// 就各错一遍。这里统一走 ensureOk，语义与 sendWithoutBody 一致，只是把方法定死。
+function deleteJson(path: string): Promise<void> {
+  return sendWithoutBody(path, { method: 'DELETE' })
 }
 
 export const api = {
@@ -386,9 +399,8 @@ export const api = {
     }),
 
   /** 停止观察并删除带单员。还有跟单员订阅时后端会拒绝（400）。 */
-  deleteLeadTrader: async (accountIndex: number | string): Promise<void> => {
-    await fetch(`/api/lead-traders/${accountIndex}`, { method: 'DELETE' })
-  },
+  deleteLeadTrader: (accountIndex: number | string): Promise<void> =>
+    deleteJson(`/api/lead-traders/${accountIndex}`),
 
   /** 全部跟单员的卡片摘要。 */
   followers: () => getJson<FollowerSummary[]>('/api/followers'),
@@ -454,9 +466,7 @@ export const api = {
     }),
 
   /** 删除跟单员及其流水。**不影响带单员是否继续观察**。 */
-  deleteFollower: async (id: number | string): Promise<void> => {
-    await fetch(`/api/followers/${id}`, { method: 'DELETE' })
-  },
+  deleteFollower: (id: number | string): Promise<void> => deleteJson(`/api/followers/${id}`),
 
   marketQuote: (marketId: number) => getJson<MarketQuote>(`/api/markets/${marketId}/quote`),
 
@@ -487,9 +497,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  deleteExchange: async (id: number): Promise<void> => {
-    await fetch(`/api/exchanges/${id}`, { method: 'DELETE' })
-  },
+  deleteExchange: (id: number): Promise<void> => deleteJson(`/api/exchanges/${id}`),
 
   /** 系统支持的平台（映射页的选择器用它，**不是"你配了哪些交易所"**）。 */
   symbolPlatforms: () => getJson<SymbolPlatform[]>('/api/symbol-mappings/platforms'),
@@ -527,9 +535,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  deleteSymbolMapping: async (id: number): Promise<void> => {
-    await fetch(`/api/symbol-mappings/${id}`, { method: 'DELETE' })
-  },
+  deleteSymbolMapping: (id: number): Promise<void> => deleteJson(`/api/symbol-mappings/${id}`),
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1152,4 +1158,202 @@ export const setupApi = {
   /// 用**已保存**的通道发一封测试邮件（测的是库里那一份，不是界面上刚敲的）。
   testNotification: () =>
     getJson<NotificationDelivery>('/api/setup/notifications/test', { method: 'POST' }),
+}
+
+// ── 权限菜单 / 角色（动态路由与菜单管理的唯一数据源）──────
+//
+// 契约要点：节点的 `code` 是**稳定且唯一**的标识，前端拿它当路由 name、并据此从
+// viewRegistry 取视图；`kind` 决定它是不是可进入的页面（group 只作导航分组）。
+// 后端只决定"注册哪些 code"，前端不猜、也不允许节点自带组件路径。
+
+/** 节点形态：分组（导航标题，不可点击）/ 菜单（可进入）/ 隐藏（可进入但不进导航）。 */
+export type MenuKind = 'group' | 'menu' | 'hidden'
+
+export interface MenuNodeDto {
+  id: number
+  /** 唯一且稳定；前端用它作路由 name（removeRoute/hasRoute 只能按 name 操作）。 */
+  code: string
+  title: string
+  /** 路由路径。分组节点为 null；menu/hidden 正常有值。 */
+  path: string | null
+  /** 图标名（如 `IconDashboard`）；由 iconRegistry 解析，未识别回退中性图标。 */
+  icon: string | null
+  kind: MenuKind
+  sortOrder: number
+  /** false = 不进导航，但**路由仍注册**（可被深链/程序跳转命中）。 */
+  isVisible: boolean
+  /** 该节点上可用的动作（view / edit / delete…）。 */
+  actions: string[]
+  children: MenuNodeDto[]
+}
+
+/**
+ * 新增/修改菜单节点的载荷。
+ *
+ * **不含 permissionKey**：它由服务端按节点 code 生成，前端不回传——
+ * 回传等于把"权限键怎么拼"这个规则复制到前端，两处早晚会不一致。
+ */
+export interface MenuPayload {
+  /** 父节点 Id；null = 一级节点。 */
+  parentId: number | null
+  code: string
+  title: string
+  path: string | null
+  icon: string | null
+  kind: MenuKind
+  sortOrder: number
+  isVisible: boolean
+  actions: string[]
+}
+
+export interface RoleSummary {
+  code: string
+  title: string
+  /** 系统内置角色：不可删改（superadmin 恒不可从菜单上撤权）。 */
+  isSystem: boolean
+}
+
+/** 当前会话可见的一条权限：键 + 该键下允许的动作。 */
+export interface PermissionGrant {
+  permissionKey: string
+  actions: string[]
+}
+
+/** 当前会话的角色与权限矩阵（按钮级控制的依据）。 */
+export interface PermissionSnapshot {
+  roles: RoleSummary[]
+  permissions: PermissionGrant[]
+}
+
+/** 一个菜单节点的角色授权。 */
+export interface MenuRoleAssignment {
+  roleCodes: string[]
+}
+
+/** 当前用户有查看权的菜单树（登录即可读，只含 view 权限内的节点）。 */
+export const menuApi = {
+  tree: () => getJson<MenuNodeDto[]>('/api/menus/tree'),
+}
+
+/** 当前会话的角色与权限矩阵；页面据此做按钮级控制。 */
+export const permissionApi = {
+  current: () => getJson<PermissionSnapshot>('/api/auth/permissions'),
+}
+
+export const roleApi = {
+  list: () => getJson<RoleSummary[]>('/api/roles'),
+
+  /// 新建角色。响应体未被契约约定，也不需要（列表随后重新拉），故不解析。
+  create: (payload: { code: string; title: string }) =>
+    sendWithoutBody('/api/roles', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+}
+
+/// 菜单管理（管理视图）。**写操作一律不解析响应体**：契约只约定了请求形状，
+/// 响应是否是节点、还是 204，两边没定死；忽略它就不会因为一个未约定的形状而失败，
+/// 反正写完都要重拉整棵树。
+export const adminMenuApi = {
+  /** 全量菜单树（含隐藏与不可见节点，管理视图用）。 */
+  tree: () => getJson<MenuNodeDto[]>('/api/admin/menus'),
+
+  create: (payload: MenuPayload) =>
+    sendWithoutBody('/api/admin/menus', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  update: (id: number, payload: MenuPayload) =>
+    sendWithoutBody(`/api/admin/menus/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  /** 删除节点。有子节点时后端回 400（把它的 message 原样展示）。 */
+  remove: (id: number) => deleteJson(`/api/admin/menus/${id}`),
+
+  /** 读一个节点当前授权的角色。 */
+  roles: (id: number) => getJson<MenuRoleAssignment>(`/api/admin/menus/${id}/roles`),
+
+  setRoles: (id: number, roleCodes: string[]) =>
+    sendWithoutBody(`/api/admin/menus/${id}/roles`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ roleCodes }),
+    }),
+}
+
+// ── 用户管理 / 角色管理（管理视图）────────────────────────
+//
+// 与 adminMenuApi 同一套约定：读走 getJson、写走 sendWithoutBody / deleteJson，
+// 写操作**一律不解析响应体**——契约只约定了请求形状，界面写完都靠重拉。
+//
+// 刻意不提供的东西：删账号 / 改密码 / 重置 MFA。没有"证明你是你"的额外通道时，
+// 这三件事怎么做都是洞（见 docs/AUTH.md 第七节），所以界面上干脆不给入口。
+
+/** 一个账号的摘要。`roles` 是它当前的角色绑定（分配对话框的勾选初值直接取它）。 */
+export interface UserSummary {
+  id: number
+  email: string
+  /** ISO UTC 字符串。显示时换算到本地时区（见 utils/format 的 formatLocalDateTime）。 */
+  createdAt: string
+  roles: RoleSummary[]
+}
+
+/** 角色的管理视图摘要：在 RoleSummary 之上多了两个计数（界面直接显示，不去自己数）。 */
+export interface AdminRoleSummary {
+  code: string
+  title: string
+  isSystem: boolean
+  memberCount: number
+  menuCount: number
+}
+
+/** 一个角色被授权到的菜单（按菜单 code 的整体集合）。 */
+export interface RoleMenuAssignment {
+  menuCodes: string[]
+}
+
+export const adminUserApi = {
+  /** 全量账号。注册是开放的，这份清单就是全部账号——管理侧只做角色分配。 */
+  list: () => getJson<UserSummary[]>('/api/admin/users'),
+
+  /// 整体替换一个账号的角色绑定（提交什么就是什么，含"一个都不留"）。
+  setRoles: (id: number, roleCodes: string[]) =>
+    sendWithoutBody(`/api/admin/users/${id}/roles`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ roleCodes }),
+    }),
+}
+
+export const adminRoleApi = {
+  /** 全量角色（含成员数 / 菜单数）。读这份而不是 /api/roles：那两个计数只有这里有。 */
+  list: () => getJson<AdminRoleSummary[]>('/api/admin/roles'),
+
+  /// 改名（只改显示名；code 是角色标识，不可改）。系统角色由服务端拒绝（400）。
+  rename: (code: string, title: string) =>
+    sendWithoutBody(`/api/admin/roles/${code}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }),
+
+  /** 删除角色。系统角色、还有成员……后端回 400（把它的 message 原样展示）。 */
+  remove: (code: string) => deleteJson(`/api/admin/roles/${code}`),
+
+  /** 这个角色被授权到的菜单 code。 */
+  menus: (code: string) => getJson<RoleMenuAssignment>(`/api/admin/roles/${code}/menus`),
+
+  /// 整体替换这个角色的菜单授权（提交什么就是什么）。
+  setMenus: (code: string, menuCodes: string[]) =>
+    sendWithoutBody(`/api/admin/roles/${code}/menus`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ menuCodes }),
+    }),
 }

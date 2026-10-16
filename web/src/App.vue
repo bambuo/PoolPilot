@@ -1,118 +1,148 @@
 <script setup lang="ts">
-import { computed, ref, type Component } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { computed, type Component } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
-import { authApi } from '@/api/client'
-import { disconnectMonitorHub } from '@/composables/useMonitorHub'
+import type { MenuNodeDto } from '@/api/client'
+import { resolveIcon } from '@/components/iconRegistry'
+import { useMenu } from '@/composables/useMenu'
 import { useSession } from '@/composables/useSession'
+import { useSignOut } from '@/composables/useSignOut'
 import { useTheme } from '@/composables/useTheme'
 
-// 图标按需导入（与 HeaderHint 里的用法一致：不全局注册，用到哪几个进哪几个）
-import {
-  IconDashboard,
-  IconFilter,
-  IconMoon,
-  IconSun,
-  IconHistory,
-  IconList,
-  IconRelation,
-  IconScan,
-  IconStorage,
-  IconNotification,
-  IconUser,
-  IconUserGroup,
-} from '@arco-design/web-vue/es/icon'
+// 顶栏自用的图标（与导航项不同，导航项的图标由后端数据经 iconRegistry 解析）
+import { IconDown, IconMoon, IconSun, IconUser } from '@arco-design/web-vue/es/icon'
 
-/// 工作台外壳。导航项按「总览 → 观察 → 跟单 → 分析 → 回测」的使用顺序排列：
-/// 首页是关系图（一屏说清三层结构），之后是池列表与带单员（被观察的池），
-/// 才是跟单（下场的账户），最后是门槛与回测。
+/// 工作台外壳。导航**由数据驱动**：来自 `/api/menus/tree`（见 useMenu），
+/// 顺序、标题、图标、层级都由后端那份菜单决定，前端不再写死一张 navItems。
+///
+/// 为什么不写死：本批引入权限之后，"谁能看到哪些页"是数据；写死的导航会在人没有权限时
+/// 依然点得进去（然后被守卫弹回来），那种"看得到、进不去"比看不到更让人困惑。
 ///
 /// 不要用 `a-layout-header` 的默认外观：Arco 给它的 CSS 只有 `flex: 0 0 auto`，
 /// **既没有高度也没有背景**（它的示例都自己传 height）。不设高度会让它塌成内容高度、
 /// 背景透明，导航就变成一条看不见的横线——比没有导航更糟。
 /// 所以高度、布局与描边都显式写出；而**颜色一律取令牌**（文本色、底色、悬停底色），
-/// 顶栏因此跟着主题一起变，而不是像第一版那样写死一段深灰。
-interface NavItem {
-  readonly to: string
+/// 顶栏因此跟着主题一起变。
+///
+/// 分组用一个**单一形状**的条目表达（而不是"分组/链接"两种形状的联合）：
+/// 模板里读同一个字段、不必靠 v-if 收窄类型，写起来更直白。
+interface NavEntry {
+  readonly kind: 'group' | 'link'
+  /// v-for 的 key（节点 code，唯一且稳定）。
+  readonly key: string
+  /// 分组标题，或链接文字。
   readonly label: string
-  /// 图标。**每个都要与那一页在做的事对得上**，不是装饰：
-  /// 菜单是唯一一屏能看到全部功能的地方，图标在这里的作用是"想起那一页是干什么的"。
-  /// 选取理由逐条写在下面，改图标时先读一遍——把"筛选"的图标挂到"回测"上，
-  /// 比没有图标更糟：它会给出一个错的提示。
+  /// 链接目标的路径。分组条目为空串（它不可点击，模板里也不读它）。
+  readonly to: string
   readonly icon: Component
-  /// 该项之下是否还有子页面。池详情 `/pools/:accountIndex` 仍属于「池列表」。
-  readonly hasChildren?: boolean
+  /// 分组的子项（缩进显示）；链接条目为空数组。
+  readonly links: readonly NavLink[]
 }
 
-const navItems: readonly NavItem[] = [
-  // 那一页是一屏系统关系图（池 → 带单员 → 跟单员），仪表盘是最贴切的"总览"
-  { to: '/graph', label: '总览', icon: IconDashboard },
-  // 表格式的池目录
-  { to: '/pools', label: '池列表', icon: IconList, hasChildren: true },
-  // "一个带单员负责盯着一个池：订阅它的持仓与成交流"——扫描/盯盘
-  { to: '/leads', label: '带单员', icon: IconScan },
-  // 跟单员是各自独立记账的账户，一个带单员下可挂多个
-  { to: '/copy', label: '跟单', icon: IconUserGroup, hasChildren: true },
-  // 与新建/编辑交易所弹窗的标题图标同款（那一栏存的是配置与凭据）
-  { to: '/exchanges', label: '交易所', icon: IconStorage },
-  // 映射＝"源标的 → 目标合约"的对应关系
-  { to: '/symbol-mappings', label: '标的映射', icon: IconRelation },
-  // 门槛＝这本金够不够跟，是该被筛出来的
-  { to: '/feasibility', label: '规模门槛', icon: IconFilter },
-  // 回测＝拿历史数据跑一遍
-  { to: '/backtest', label: '回测面板', icon: IconHistory },
-  // 通知＝系统往外发的消息（谁能发 / 发什么 / 发了什么），铃铛是最不容易误读的一个
-  { to: '/notifications', label: '通知', icon: IconNotification },
-]
+interface NavLink {
+  readonly to: string
+  readonly label: string
+  readonly icon: Component
+}
 
 const route = useRoute()
 const router = useRouter()
-const { user, clear: clearSession } = useSession()
+const { user } = useSession()
+const { tree } = useMenu()
+const { signingOut, signOut } = useSignOut()
 
-/// 公开页（登录 / 注册 / MFA）不套工作台外壳：那时还没有"当前用户"，
+/// 公开页（登录 / 注册 / 初始化 / MFA）不套工作台外壳：那时还没有"当前用户"，
 /// 一排导航点进去只会被守卫弹回登录页。判据与路由守卫共用同一处 meta。
 const isPublicPage = computed(() => route.meta.public === true)
 
-const signingOut = ref(false)
+/// 从一段子树里收集**可进入且进导航**的菜单（`menu` 且 `isVisible` 且有 path）。
+///
+/// `hidden` 不进导航（它本就是"能进但不露面"的页面，如各种详情页）；
+/// `isVisible === false` 的同样不显示——但**它的路由仍然注册**（由 useMenu 负责），
+/// 所以它只是不露面，不是进不去。
+function collectLinks(nodes: readonly MenuNodeDto[]): NavLink[] {
+  const links: NavLink[] = []
 
-async function signOut(): Promise<void> {
-  signingOut.value = true
+  for (const node of nodes) {
+    if (node.kind === 'menu' && node.isVisible && node.path !== null) {
+      links.push({ to: node.path, label: node.title, icon: resolveIcon(node.icon) })
+    }
 
-  try {
-    await authApi.logout()
-
-    // 先断开监控连接再清会话：那条连接带着刚才的 Cookie，
-    // 留着它会在服务端变成一串没人认领的 401
-    await disconnectMonitorHub()
-    clearSession()
-
-    await router.push({ name: 'login' })
-  } catch (error) {
-    Message.error(error instanceof Error ? error.message : '退出登录失败')
-  } finally {
-    signingOut.value = false
+    if (node.children.length > 0) {
+      links.push(...collectLinks(node.children))
+    }
   }
+
+  return links
 }
 
-// 主题：开关在顶栏最右。整页跟着 Arco 的暗色属性翻转，配色令牌的说明见 useTheme
-const { theme, toggle: toggleTheme } = useTheme()
+/// 把菜单树摊成顶栏要渲染的条目序列（保持后端给的顺序）。
+///
+/// 一级 `group` 变成一个分组条目（其下缩进显示可见的菜单子项；一个可见子项都没有的分组
+/// 连标签也不显示——空标题没有意义）；一级 `menu` 变成一条普通链接；其余（`hidden`、
+/// 不可见）不进导航。
+const navEntries = computed<NavEntry[]>(() => {
+  const entries: NavEntry[] = []
+
+  for (const node of tree.value) {
+    if (node.kind === 'group') {
+      const links = collectLinks(node.children)
+
+      if (links.length > 0) {
+        entries.push({
+          kind: 'group',
+          key: node.code,
+          label: node.title,
+          to: '',
+          icon: resolveIcon(node.icon),
+          links,
+        })
+      }
+    } else if (node.kind === 'menu' && node.isVisible && node.path !== null) {
+      entries.push({
+        kind: 'link',
+        key: node.code,
+        label: node.title,
+        to: node.path,
+        icon: resolveIcon(node.icon),
+        links: [],
+      })
+    }
+  }
+
+  return entries
+})
 
 /// 高亮由路径显式判定，不用 router 的 `router-link-active`。
 ///
 /// 理由：`router-link-active` 的包含式匹配取决于**路由表的嵌套结构**，而池列表与池详情
 /// 在本项目里是平级的兄弟路由，靠它匹配不到。显式判断既可靠，又把规则写在能读到的地方。
+/// 规则用"路径前缀"而不是"是否列在某个子菜单里"：详情页（`/pools/123`）属于 `/pools`
+/// 这件事，只有路径本身说得清——菜单树里并没有"谁是谁的子页"这条数据。
 const activePath = computed(() => route.path)
 
-function isActive(item: NavItem): boolean {
-  return item.hasChildren
-    ? activePath.value === item.to || activePath.value.startsWith(`${item.to}/`)
-    : activePath.value === item.to
+function isActivePath(path: string): boolean {
+  return activePath.value === path || activePath.value.startsWith(`${path}/`)
 }
+
+/// 分组自身的高亮：它的**任一子项**是当前页时，分组标题也点亮——
+/// 否则进了「菜单管理」后，「系统」看上去像没被选中，读的人会以为导航丢了当前页。
+function isGroupActive(entry: NavEntry): boolean {
+  return entry.links.some((link) => isActivePath(link.to))
+}
+
+/// 下拉子项的行内跳转。用显式函数而不是 `@click="router.push(...)"`：
+/// push 返回 Promise，直接写在模板里会留下一个没人接的返回值。
+function navigateTo(path: string): void {
+  void router.push(path)
+}
+
+// 主题：开关在顶栏最右。整页跟着 Arco 的暗色属性翻转，配色令牌的说明见 useTheme
+const { theme, toggle: toggleTheme } = useTheme()
 </script>
 
 <template>
-  <!-- 公开页（登录 / 注册 / MFA）：只有一份居中的卡片，没有顶栏与导航 -->
+  <!-- 公开页（登录 / 注册 / 初始化 / MFA）：只有一份居中的卡片，没有顶栏与导航 -->
   <RouterView v-if="isPublicPage" />
 
   <a-layout v-else class="shell">
@@ -125,16 +155,47 @@ function isActive(item: NavItem): boolean {
       </span>
 
       <nav class="nav">
-        <RouterLink
-          v-for="item in navItems"
-          :key="item.to"
-          :to="item.to"
-          class="nav-link"
-          :class="{ 'nav-link-active': isActive(item) }"
-        >
-          <component :is="item.icon" class="nav-icon" />
-          <span>{{ item.label }}</span>
-        </RouterLink>
+        <template v-for="entry in navEntries" :key="entry.key">
+          <!-- 一级分组（如「系统」）：它不可直接进入，点开/悬停是下拉子菜单。
+               触发器复用一级链接的样式，因此与旁边的普通项同一行、同一套高亮规则。 -->
+          <a-dropdown v-if="entry.kind === 'group'" :trigger="['hover', 'click']" position="bl">
+            <span
+              class="nav-link nav-link-trigger"
+              :class="{ 'nav-link-active': isGroupActive(entry) }"
+            >
+              <component :is="entry.icon" class="nav-icon" />
+              <span>{{ entry.label }}</span>
+              <IconDown class="nav-caret" />
+            </span>
+
+            <template #content>
+              <a-doption
+                v-for="link in entry.links"
+                :key="link.to"
+                @click="navigateTo(link.to)"
+              >
+                <span class="nav-dropdown-item">
+                  <component :is="link.icon" class="nav-icon" />
+                  <span>{{ link.label }}</span>
+                </span>
+              </a-doption>
+            </template>
+          </a-dropdown>
+
+          <RouterLink
+            v-else
+            :to="entry.to"
+            class="nav-link"
+            :class="{ 'nav-link-active': isActivePath(entry.to) }"
+          >
+            <component :is="entry.icon" class="nav-icon" />
+            <span>{{ entry.label }}</span>
+          </RouterLink>
+        </template>
+
+        <!-- 一个可点菜单都没有（无任何权限）：给一句明确的说明，而不是留下一条空导航。
+             空白会让人以为导航坏了，而这里的事实是"这个账号确实没有可进的页面"。 -->
+        <span v-if="navEntries.length === 0" class="nav-empty">无可用菜单</span>
       </nav>
 
       <!-- 主题开关。按钮上只有图标、没有文字，名字必须由 aria-label 给出——
@@ -223,6 +284,31 @@ function isActive(item: NavItem): boolean {
   height: 100%;
 }
 
+/* 无权限时的说明：与导航文字同一档但更淡，静静说明"这里没有可点的东西" */
+.nav-empty {
+  font-size: 13px;
+  color: var(--color-text-4);
+}
+
+/* 分组（如「系统」）：点开/悬停是下拉子菜单，触发器本身不可直接进入。
+   它复用 .nav-link 的外观，因此与旁边的普通项同高、同色、用同一套高亮规则；
+   这里只补两件它没有的事：鼠标指针，以及一个"可展开"的指示三角。 */
+.nav-link-trigger {
+  cursor: pointer;
+}
+
+.nav-caret {
+  font-size: 12px;
+  color: var(--color-text-4);
+}
+
+/* 下拉里的子项：图标 + 文字，图标仍走 iconRegistry 的那一套解析 */
+.nav-dropdown-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .nav-link {
   display: flex;
   align-items: center;
@@ -250,7 +336,7 @@ function isActive(item: NavItem): boolean {
   color: var(--color-text-1);
 }
 
-/* 当前路由高亮。由 isActive() 显式判定后加类，见 script 里的说明。 */
+/* 当前路由高亮。由 isActivePath() 显式判定后加类，见 script 里的说明。 */
 .nav-link-active {
   color: var(--color-text-1);
   border-bottom-color: rgb(var(--primary-6));

@@ -65,6 +65,30 @@ export function formatDateTime(iso: string | null): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toISOString().slice(0, 16).replace('T', ' ')
 }
 
+/**
+ * 按**浏览器所在时区**显示时刻（`YYYY-MM-DD HH:mm`）。
+ *
+ * 与 formatDateTime 的分工：那个走 `toISOString`，输出的是 **UTC**——它适合"与后端对口径"
+ * 的字段；而"账号是什么时候建的"这类问题要按使用者所在时区回答，用 UTC 会让 UTC+7 的机器
+ * 把它读成 8 小时前的另一天。
+ *
+ * 不用 toLocaleString：它的长短与分隔方式随环境变（实测窄列里会被折成两行，见
+ * NotificationView 的注释），固定宽度也便于一眼比较先后。
+ */
+export function formatLocalDateTime(iso: string | null): string {
+  if (!iso) return '—'
+
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+
+  const pad = (n: number): string => String(n).padStart(2, '0')
+
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  )
+}
+
 export function formatDate(iso: string | null): string {
   if (!iso) return '—'
 

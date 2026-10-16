@@ -9,6 +9,7 @@ import { IconCopy } from '@arco-design/web-vue/es/icon'
 import AuthCard from '@/components/AuthCard.vue'
 import { useAuthFlow } from '@/composables/useAuthFlow'
 import { useSession } from '@/composables/useSession'
+import { HOME_PATH } from '@/router'
 
 /// 登录第二步：MFA。
 ///
@@ -63,7 +64,9 @@ async function submit(): Promise<void> {
   try {
     await complete(trimmed)
 
-    // 回跳目标优先取查询参数（守卫带来的），其次取进来时记下的那一个
+    // 回跳目标优先取查询参数（守卫带来的），其次取进来时记下的那一个。
+    // 兜底用**路径**而不是路由 name：首页那条路由由菜单树动态注册，
+    // 此刻（刚登录、路由还没注册）按 name 跳转只会报"没有这条路由"。
     const target =
       typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
         ? route.query.redirect
@@ -71,7 +74,7 @@ async function submit(): Promise<void> {
 
     redirectAfterLogin.value = null
 
-    await router.push(target !== null && !target.startsWith('/mfa') ? target : { name: 'graph' })
+    await router.push(target !== null && !target.startsWith('/mfa') ? target : HOME_PATH)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '验证失败'
     code.value = ''
