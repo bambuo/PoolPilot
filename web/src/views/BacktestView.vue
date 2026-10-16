@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router'
 import { api, type BacktestResult, type PoolSummary } from '@/api/client'
 import LineChart from '@/components/LineChart.vue'
 import MetricTile from '@/components/MetricTile.vue'
+import { usePermission } from '@/composables/usePermission'
 import { filterPoolOption, poolOptionLabel } from '@/utils/poolOptions'
 import { formatNumber, formatPercent, formatUsd } from '@/utils/format'
 
@@ -19,6 +20,17 @@ import { formatNumber, formatPercent, formatUsd } from '@/utils/format'
 ///
 /// 诚实声明：上游**不提供历史成交明细**（实测交易频道只能取到近端快照），
 /// 所以跟单摩擦是参数化的情景假设，不是历史回放。这也是这个页面最重要的标注。
+
+/// 本页自身的权限键。服务端按 `menu:{code}` 生成，前端只读不写。
+///
+/// 本页唯一的写口是「跑回测」——它虽不改数据，但后端把它归到 edit 门后，
+/// 所以按钮与首屏自动跑都用同一个判据，免得进来先吃一个 403。
+const PAGE_PERMISSION = 'menu:backtest'
+
+const { can, refresh: refreshPermissions } = usePermission()
+
+const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
+
 const route = useRoute()
 
 const accountIndex = ref(String(route.query.pool ?? '281474976552443'))
@@ -108,8 +120,20 @@ async function run(): Promise<void> {
 }
 
 onMounted(async () => {
+  // 权限缓存按会话共享：进来先拉一次，按钮状态才与当前会话一致
+  try {
+    await refreshPermissions()
+  } catch (error) {
+    console.warn('读取权限失败，本页按钮将按无权限处理', error)
+  }
+
   await loadPools()
-  await run()
+
+  // 回测接口与前端的「运行」按钮同一判据（menu:backtest 的 edit）。没有权限时
+  // 不自动发起：否则一进页面就换来一个 403，而这一页除了"看参数"什么也做不了
+  if (canEdit.value) {
+    await run()
+  }
 })
 </script>
 
@@ -157,10 +181,22 @@ onMounted(async () => {
           <template #suffix>次/天</template>
         </a-input-number>
 
-        <a-button type="primary" :loading="loading" @click="run">运行</a-button>
+        <a-button
+          type="primary"
+          :disabled="!canEdit"
+          :title="canEdit ? '' : '需要「回测面板」的管理权限（编辑）'"
+          :loading="loading"
+          @click="run"
+        >
+          运行
+        </a-button>
       </a-space>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" style="margin-top: 12px" />
+
+      <div v-if="!canEdit" class="readonly-line">
+        当前账号对本页只有查看权限——不能运行回测。
+      </div>
 
       <div style="margin-top: 10px; font-size: 12px; color: var(--color-text-3)">
         往返成本参考：Lighter 标准档挂单与吃单均为 0 手续费，所以这一项填的是<b>点差 + 滑点</b>，
@@ -246,3 +282,12 @@ onMounted(async () => {
     </template>
   </a-space>
 </template>
+
+<style scoped>
+/* 只在该页确实有被禁用的按钮时才显示（见模板里的判断） */
+.readonly-line {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgb(var(--warning-6));
+}
+</style>

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { api, type ExchangeConfigRow, type FollowerSummary, type LeadTrader } from '@/api/client'
+import { usePermission } from '@/composables/usePermission'
 import { COPY_MODES, DEFAULT_COPY_MODE, copyModeLabel, type CopyMode } from '@/domain/copyMode'
 import { formatPercent, formatNumber, formatUsd } from '@/utils/format'
 
@@ -15,6 +16,18 @@ import { formatPercent, formatNumber, formatUsd } from '@/utils/format'
 /// 与「带单员」页的分工：那边是**被观察的池**，这里是**下场的账户**。
 /// 一个池可以挂多个跟单员（各自一份本金、各记一套账），所以卡片的身份是跟单员编号，
 /// 池名只是它订阅的对象。
+
+/// 本页自身的权限键。服务端按 `menu:{code}` 生成，前端只读不写。
+///
+/// 列表页只有一个写口（新建跟单，归 edit）；改本金/启停/平仓/删除都在详情页，
+/// 但那条路由与「跟单」是同一个权限键，所以 canDelete 也用在这里的只读提示上。
+const PAGE_PERMISSION = 'menu:copy-list'
+
+const { can, refresh: refreshPermissions } = usePermission()
+
+const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
+const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
+
 /// 持仓区固定显示的行数。超过它就得滚动——高度随标的多少变，一排卡片就对不齐
 const POSITION_ROWS_VISIBLE = 2
 
@@ -191,7 +204,14 @@ async function create(): Promise<void> {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // 权限缓存按会话共享：进来先拉一次，按钮状态才与当前会话一致
+  try {
+    await refreshPermissions()
+  } catch (error) {
+    console.warn('读取权限失败，本页按钮将按无权限处理', error)
+  }
+
   void load()
   void loadExchanges()
 })
@@ -218,6 +238,10 @@ onMounted(() => {
         每个跟单员订阅一个<b>带单员</b>，各自一个独立账户：本金、仓位、盈亏、权益曲线各自记账，
         规模口径为<b>比例复制</b>（目标仓位 = 池子仓位 × 本金 ÷ 池子权益）。
         同一个带单员可以挂多个跟单员，用不同本金各跟一份。点任意卡片查看该跟单的详情。
+      </div>
+
+      <div v-if="!canEdit && !canDelete" class="readonly-line">
+        当前账号对本页只有查看权限——不能新建跟单。
       </div>
     </a-card>
 
@@ -399,7 +423,13 @@ onMounted(() => {
           </div>
         </RouterLink>
 
-        <button type="button" class="account-card add-card" @click="openCreate()">
+        <button
+          type="button"
+          class="account-card add-card"
+          :disabled="!canEdit"
+          :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+          @click="openCreate()"
+        >
           <span style="font-size: 26px; line-height: 1">+</span>
           <span style="margin-top: 6px">开始跟单</span>
         </button>
@@ -528,6 +558,13 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 只在该页确实有被禁用的按钮时才显示（见模板里的判断） */
+.readonly-line {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgb(var(--warning-6));
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -718,6 +755,18 @@ onMounted(() => {
 
 .add-card:hover {
   border-color: rgb(var(--primary-6));
+  box-shadow: none;
+}
+
+/* 无权限时"开始跟单"卡不该还是可点的样子：native 按钮的 disabled 不换光标，
+   悬停也不该再亮起来——否则它会与"这里可以开始"的暗示自相矛盾 */
+.add-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.add-card:disabled:hover {
+  border-color: var(--color-border-3);
   box-shadow: none;
 }
 </style>

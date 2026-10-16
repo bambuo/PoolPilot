@@ -1,13 +1,18 @@
 import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
 import { onUnmounted, ref, type Ref } from 'vue'
 
+import { usePermission } from '@/composables/usePermission'
+
 /// 监控 hub 的连接。
 ///
 /// 这个项目里**只有这一处**建立 SignalR 连接：连接是全局资源（一条长连接、一份自动重连策略），
 /// 每个页面各建一条的话，切几次页面就会堆出一串连接，而且它们互相不知道对方存在。
 /// 所以做成模块级的单例：第一个用到的人建立它，之后的调用者只是挂上自己的回调。
 ///
-/// 自动重连用 SignalR 自带的策略（0s、2s、10s、30s，之后每 30s 一次）。
+/// 自动重连用 SignalR 的**默认**策略：0s、2s、10s、30s 各重试一次，**四次之后停止**
+/// （默认策略的末尾是 null，不是"每 30s 一次"）。停止后本次会话不再自动重建，
+/// 要靠下一次 ensureConnection（重新进入用到它的页面）——服务端 401/Abort 期间
+/// 那四次重连也打不出风暴。
 /// 重连期间界面必须能区分"没有新数据"与"连接断了"——所以把状态也暴露出去，
 /// 否则一条断了的连接看起来和"账户一直没变化"一模一样。
 export type MonitorHubState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
@@ -31,9 +36,31 @@ let starting: Promise<void> | null = null
 const state = ref<MonitorHubState>('disconnected')
 const accountHandlers = new Set<LiveAccountHandler>()
 
-function ensureConnection(): Promise<void> {
+async function ensureConnection(): Promise<void> {
   if (connection !== null) {
-    return starting ?? Promise.resolve()
+    await (starting ?? Promise.resolve())
+    return
+  }
+
+  // 端到端的门在服务端（连接建立时校验 menu:graph 的 view，不通过即 Abort），
+  // 这里先问一次是为了**不去敲一扇注定关着的门**：没有权限就别连，
+  // 免得在两边日志里各留一串"尝试→拒绝→重试"的噪声。
+  const permission = usePermission()
+
+  if (!permission.loaded.value) {
+    // 首次挂载时权限快照可能还没拉过：先确认一次。"没拉过"不等于"没有"，
+    // 直接按默认拒绝处理会把合法账号的实时通道也掐掉。
+    try {
+      await permission.refresh()
+    } catch {
+      state.value = 'disconnected'
+      return
+    }
+  }
+
+  if (!permission.can('menu:graph', 'view')) {
+    state.value = 'disconnected'
+    return
   }
 
   // 走同源相对路径：开发期由 Vite 代理到后端（vite.config.ts 里 /hubs 已开 ws），
@@ -89,6 +116,13 @@ function ensureConnection(): Promise<void> {
   })
 
   hub.onclose(() => {
+    // 重连耗尽、或服务端主动断开：把单例清空，下一次 ensureConnection 才有机会重建。
+    // 只在"当前单例还是这一条"时清——否则会把之后新建的连接误清掉。
+    if (connection === hub) {
+      connection = null
+      starting = null
+    }
+
     state.value = 'disconnected'
   })
 

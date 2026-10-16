@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { api, type LeadTrader, type PoolSummary } from '@/api/client'
+import { usePermission } from '@/composables/usePermission'
 import { formatAgeSince, formatDateTime, formatSince, formatUsd } from '@/utils/format'
 import { filterPoolOption, poolOptionLabel } from '@/utils/poolOptions'
 
@@ -17,6 +18,18 @@ import { filterPoolOption, poolOptionLabel } from '@/utils/poolOptions'
 ///
 /// 状态刻意分成三种而不是两种：**已暂停**（我关的）与**未连接**（启用着但收不到推送）
 /// 是两件完全不同的事，合成一个"未监控"会让人以为是自己关的。
+
+/// 本页自身的权限键。服务端按 `menu:{code}` 生成，前端只读不写。
+///
+/// 带单员的写口有两类动作：创建与暂停/恢复都改配置（edit），停止观察会删掉带单员本身（delete）——
+/// 与菜单管理页同一套动作语义。
+const PAGE_PERMISSION = 'menu:leads'
+
+const { can, refresh: refreshPermissions } = usePermission()
+
+const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
+const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
+
 const leads = ref<LeadTrader[]>([])
 const pools = ref<PoolSummary[]>([])
 const loading = ref(false)
@@ -126,7 +139,16 @@ async function stop(lead: LeadTrader): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  // 权限缓存按会话共享：进来先拉一次，按钮状态才与当前会话一致
+  try {
+    await refreshPermissions()
+  } catch (error) {
+    console.warn('读取权限失败，本页按钮将按无权限处理', error)
+  }
+
+  await load()
+})
 </script>
 
 <template>
@@ -150,6 +172,10 @@ onMounted(load)
         一个带单员负责盯着一个池：订阅它的持仓与成交流，把每次仓位变化记成信号。
         <b>它的存在与有没有人跟单无关</b>——只要它在，池子就一直被观察，
         这样「先观察一段时间再决定跟不跟」才有历史可看。
+      </div>
+
+      <div v-if="!canEdit && !canDelete" class="readonly-line">
+        当前账号对本页只有查看权限——不能创建、暂停或停止带单员。
       </div>
     </a-card>
 
@@ -207,9 +233,30 @@ onMounted(load)
               </template>
             </span>
             <a-space :size="12">
-              <a-link v-if="lead.isEnabled" @click="setEnabled(lead, false)">暂停</a-link>
-              <a-link v-else @click="setEnabled(lead, true)">恢复</a-link>
-              <a-link status="danger" @click="stop(lead)">停止</a-link>
+              <a-link
+                v-if="lead.isEnabled"
+                :disabled="!canEdit"
+                :title="canEdit ? '' : '需要「带单员」的管理权限（编辑）'"
+                @click="setEnabled(lead, false)"
+              >
+                暂停
+              </a-link>
+              <a-link
+                v-else
+                :disabled="!canEdit"
+                :title="canEdit ? '' : '需要「带单员」的管理权限（编辑）'"
+                @click="setEnabled(lead, true)"
+              >
+                恢复
+              </a-link>
+              <a-link
+                status="danger"
+                :disabled="!canDelete"
+                :title="canDelete ? '' : '需要「带单员」的管理权限（删除）'"
+                @click="stop(lead)"
+              >
+                停止
+              </a-link>
             </a-space>
           </div>
 
@@ -219,7 +266,13 @@ onMounted(load)
           </a-tooltip>
         </div>
 
-        <button type="button" class="lead-card add-card" @click="openCreate">
+        <button
+          type="button"
+          class="lead-card add-card"
+          :disabled="!canEdit"
+          :title="canEdit ? '' : '需要「带单员」的管理权限（编辑）'"
+          @click="openCreate"
+        >
           <span style="font-size: 26px; line-height: 1">+</span>
           <span style="margin-top: 6px">创建带单员</span>
         </button>
@@ -266,6 +319,13 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 只在该页确实有被禁用的按钮时才显示（见模板里的判断） */
+.readonly-line {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgb(var(--warning-6));
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -436,6 +496,18 @@ onMounted(load)
 
 .add-card:hover {
   border-color: rgb(var(--primary-6));
+  box-shadow: none;
+}
+
+/* 无权限时"创建"卡不该还是可点的样子：native 按钮的 disabled 不换光标，
+   悬停也不该再亮起来——否则它会与"这里能加一条"的暗示自相矛盾 */
+.add-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.add-card:disabled:hover {
+  border-color: var(--color-border-3);
   box-shadow: none;
 }
 </style>

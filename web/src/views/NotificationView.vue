@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 
 import SmtpFields from '@/components/SmtpFields.vue'
@@ -13,6 +13,7 @@ import {
   type NotificationProviderPayload,
   type NotificationTemplate,
 } from '@/api/client'
+import { usePermission } from '@/composables/usePermission'
 
 /// 通知：通道（提供商）/ 样板 / 投递记录。
 ///
@@ -21,6 +22,18 @@ import {
 ///
 /// 界面上刻意把"能不能发出去"这件事摆在明处：通道是否可用、样板有没有指向通道、
 /// 上一次投递成没成。配错了却没有任何提示，是这类功能最费时间的一种坏法。
+
+/// 本页自身的权限键。服务端按 `menu:{code}` 生成，前端只读不写。
+///
+/// 写口分两类：提供商/样板的增改与"发送测试"都改配置或触发外发（edit），删除提供商归 delete——
+/// 与菜单管理页同一套动作语义。
+const PAGE_PERMISSION = 'menu:notifications'
+
+const { can, refresh: refreshPermissions } = usePermission()
+
+const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
+const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
+
 const tab = ref<'providers' | 'templates' | 'logs'>('providers')
 
 const providers = ref<NotificationProvider[]>([])
@@ -273,7 +286,16 @@ async function loadAll(): Promise<void> {
   }
 }
 
-onMounted(loadAll)
+onMounted(async () => {
+  // 权限缓存按会话共享：进来先拉一次，按钮状态才与当前会话一致
+  try {
+    await refreshPermissions()
+  } catch (error) {
+    console.warn('读取权限失败，本页按钮将按无权限处理', error)
+  }
+
+  await loadAll()
+})
 </script>
 
 <template>
@@ -304,6 +326,10 @@ onMounted(loadAll)
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" style="margin-bottom: 12px" />
 
+      <div v-if="!canEdit && !canDelete" class="readonly-line">
+        当前账号对本页只有查看权限——不能新建/编辑通道与样板、发送测试或删除通道。
+      </div>
+
       <a-tabs v-model:active-key="tab">
         <!-- ── 提供商 ────────────────────────────────── -->
         <a-tab-pane key="providers">
@@ -317,6 +343,8 @@ onMounted(loadAll)
               :key="provider.id"
               type="button"
               class="provider-card"
+              :disabled="!canEdit"
+              :title="canEdit ? '' : '需要「通知」的管理权限（编辑）'"
               @click="openProvider(provider)"
             >
               <div class="provider-head">
@@ -350,13 +378,32 @@ onMounted(loadAll)
                 </span>
 
                 <a-space @click.stop>
-                  <a-link @click="testProvider(provider)">测试发送</a-link>
-                  <a-link status="danger" @click="deleteProvider(provider)">删除</a-link>
+                  <a-link
+                    :disabled="!canEdit"
+                    :title="canEdit ? '' : '需要「通知」的管理权限（编辑）'"
+                    @click="testProvider(provider)"
+                  >
+                    测试发送
+                  </a-link>
+                  <a-link
+                    status="danger"
+                    :disabled="!canDelete"
+                    :title="canDelete ? '' : '需要「通知」的管理权限（删除）'"
+                    @click="deleteProvider(provider)"
+                  >
+                    删除
+                  </a-link>
                 </a-space>
               </div>
             </button>
 
-            <button type="button" class="add-card" @click="openProvider(null)">
+            <button
+              type="button"
+              class="add-card"
+              :disabled="!canEdit"
+              :title="canEdit ? '' : '需要「通知」的管理权限（编辑）'"
+              @click="openProvider(null)"
+            >
               <span class="add-plus">+</span>
               <span>新建通道</span>
             </button>
@@ -380,7 +427,14 @@ onMounted(loadAll)
               <a-tag size="small" :color="template.isCustomized ? 'arcoblue' : 'gray'">
                 {{ template.isCustomized ? '已自定义' : '默认样板' }}
               </a-tag>
-              <a-link class="template-reset" @click="restoreDefault(template)">恢复默认</a-link>
+              <a-link
+                class="template-reset"
+                :disabled="!canEdit"
+                :title="canEdit ? '' : '需要「通知」的管理权限（编辑）'"
+                @click="restoreDefault(template)"
+              >
+                恢复默认
+              </a-link>
             </div>
 
             <a-form :model="draftOf(template)" layout="vertical">
@@ -416,6 +470,8 @@ onMounted(loadAll)
               <a-space>
                 <a-button
                   type="primary"
+                  :disabled="!canEdit"
+                  :title="canEdit ? '' : '需要「通知」的管理权限（编辑）'"
                   :loading="savingTemplate === template.purpose"
                   @click="saveTemplate(template)"
                 >
@@ -557,6 +613,13 @@ onMounted(loadAll)
   color: var(--color-text-3);
 }
 
+/* 只在该页确实有被禁用的按钮时才显示（见模板里的判断） */
+.readonly-line {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: rgb(var(--warning-6));
+}
+
 /* ── 通道卡片（与交易所页同一套形制：卡片是入口、虚线卡是新建）── */
 .provider-grid {
   display: grid;
@@ -582,6 +645,18 @@ onMounted(loadAll)
 .provider-card:hover {
   border-color: rgb(var(--primary-6));
   box-shadow: 0 2px 10px rgb(0 0 0 / 8%);
+}
+
+/* 无权限时通道卡不是"不能打开"：native 按钮的 disabled 不换光标，
+   悬停也不该再亮起来——否则它看起来仍是可以点进去编辑的 */
+.provider-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.provider-card:disabled:hover {
+  border-color: var(--color-border-1);
+  box-shadow: none;
 }
 
 .provider-head {
@@ -662,6 +737,18 @@ onMounted(loadAll)
 .add-card:hover {
   color: rgb(var(--primary-6));
   border-color: rgb(var(--primary-6));
+}
+
+/* 无权限时"新建通道"卡不该还是可点的样子：native 按钮的 disabled 不换光标，
+   悬停也不该再亮起来——否则它与"这里可以新建"的暗示自相矛盾 */
+.add-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.add-card:disabled:hover {
+  color: var(--color-text-3);
+  border-color: var(--color-border-2);
 }
 
 .add-plus {

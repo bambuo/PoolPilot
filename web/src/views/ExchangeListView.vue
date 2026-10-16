@@ -4,6 +4,7 @@ import { IconLaunch } from '@arco-design/web-vue/es/icon'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { api, type ExchangeConfigRow, type FollowerSummary } from '@/api/client'
+import { usePermission } from '@/composables/usePermission'
 import {
   EXCHANGE_PRESET_GROUPS,
   codeLabel,
@@ -26,6 +27,18 @@ import { formatDateTime } from '@/utils/format'
 ///     所以整套撤掉了，界面上直说。**因此这里只该放没有提现权限、最好也没有交易权限的密钥。**</item>
 ///   <item>**读取只回尾号**：界面没有"查看凭据"入口。那是减少屏幕上的暴露面，与存储方式无关。</item>
 /// </list>
+
+/// 本页自身的权限键。服务端按 `menu:{code}` 生成，前端只读不写。
+///
+/// 配置的写口有三处：新建/编辑（含启用/停用，都改配置）归 edit，删除归 delete——
+/// 与菜单管理页同一套动作语义。
+const PAGE_PERMISSION = 'menu:exchanges'
+
+const { can, refresh: refreshPermissions } = usePermission()
+
+const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
+const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
+
 const exchanges = ref<ExchangeConfigRow[]>([])
 
 /// 实盘跟单员：用来回答"这条配置现在有没有人在用"。
@@ -415,7 +428,16 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  // 权限缓存按会话共享：进来先拉一次，按钮状态才与当前会话一致
+  try {
+    await refreshPermissions()
+  } catch (error) {
+    console.warn('读取权限失败，本页按钮将按无权限处理', error)
+  }
+
+  await load()
+})
 </script>
 
 <template>
@@ -442,6 +464,10 @@ onMounted(load)
         <b>执行侧目前只有币安 U 本位永续</b>，OKX 与 Gate 只有合约目录（供标的映射用）。
         界面上的费率只是预填的常见标准档，请按你的实际档位改。
         凭据<b>以明文保存在本机数据库</b>（未加密，也不假装加密），只放权限最小、能随时吊销的密钥。
+      </div>
+
+      <div v-if="!canEdit && !canDelete" class="readonly-line" style="margin-top: 10px">
+        当前账号对本页只有查看权限——不能新建、编辑、启停或删除交易所配置。
       </div>
     </a-card>
 
@@ -505,10 +531,37 @@ onMounted(load)
 
           <div class="card-foot">
             <a-space :size="12">
-              <a-link @click="openEdit(row)">编辑</a-link>
-              <a-link v-if="row.isEnabled" @click="setEnabled(row, false)">停用</a-link>
-              <a-link v-else @click="setEnabled(row, true)">启用</a-link>
-              <a-link status="danger" @click="requestDelete(row)">删除</a-link>
+              <a-link
+                :disabled="!canEdit"
+                :title="canEdit ? '' : '需要「交易所」的管理权限（编辑）'"
+                @click="openEdit(row)"
+              >
+                编辑
+              </a-link>
+              <a-link
+                v-if="row.isEnabled"
+                :disabled="!canEdit"
+                :title="canEdit ? '' : '需要「交易所」的管理权限（编辑）'"
+                @click="setEnabled(row, false)"
+              >
+                停用
+              </a-link>
+              <a-link
+                v-else
+                :disabled="!canEdit"
+                :title="canEdit ? '' : '需要「交易所」的管理权限（编辑）'"
+                @click="setEnabled(row, true)"
+              >
+                启用
+              </a-link>
+              <a-link
+                status="danger"
+                :disabled="!canDelete"
+                :title="canDelete ? '' : '需要「交易所」的管理权限（删除）'"
+                @click="requestDelete(row)"
+              >
+                删除
+              </a-link>
             </a-space>
             <a-tooltip :content="`创建于 ${formatDateTime(row.createdAt)}`">
               <span class="card-stamp">#{{ row.id }}</span>
@@ -516,7 +569,13 @@ onMounted(load)
           </div>
         </div>
 
-        <button type="button" class="exchange-card add-card" @click="openCreate">
+        <button
+          type="button"
+          class="exchange-card add-card"
+          :disabled="!canEdit"
+          :title="canEdit ? '' : '需要「交易所」的管理权限（编辑）'"
+          @click="openCreate"
+        >
           <span style="font-size: 26px; line-height: 1">+</span>
           <span style="margin-top: 6px">新建配置</span>
         </button>
@@ -738,6 +797,12 @@ onMounted(load)
   line-height: 1.8;
 }
 
+/* 只在该页确实有被禁用的按钮时才显示（见模板里的判断） */
+.readonly-line {
+  font-size: 12px;
+  color: rgb(var(--warning-6));
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -900,6 +965,18 @@ onMounted(load)
 
 .add-card:hover {
   border-color: rgb(var(--primary-6));
+  box-shadow: none;
+}
+
+/* 无权限时"新建配置"卡不该还是可点的样子：native 按钮的 disabled 不换光标，
+   悬停也不该再亮起来——否则它会与"这里可以加一条"的暗示自相矛盾 */
+.add-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.add-card:disabled:hover {
+  border-color: var(--color-border-3);
   box-shadow: none;
 }
 

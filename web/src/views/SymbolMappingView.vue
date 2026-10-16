@@ -9,6 +9,7 @@ import {
   type SymbolMappingFailure,
   type SymbolPlatform,
 } from '@/api/client'
+import { usePermission } from '@/composables/usePermission'
 import HeaderHint from '@/components/HeaderHint.vue'
 import { formatNumber, formatSince } from '@/utils/format'
 
@@ -26,6 +27,19 @@ import { formatNumber, formatSince } from '@/utils/format'
 ///   <item>**来源**。扫描出来的行会被下次扫描刷新，人工登记的行不会被覆盖——
 ///     人把某个标的指到哪是一个判断，机器没有资格推翻它。</item>
 /// </list>
+
+/// 本页自身的权限键。服务端按 `menu:{code}` 生成，前端只读不写。
+///
+/// 映射的写口有三处：扫描、登记/修正、启停（都改数据）归 edit，删除归 delete——
+/// 与菜单管理页同一套动作语义。它与 canEditMappings（平台有没有合约目录）是两回事：
+/// 一个管"你能不能改"，一个管"这家平台改不改得动"，两个判据都要过。
+const PAGE_PERMISSION = 'menu:symbol-mappings'
+
+const { can, refresh: refreshPermissions } = usePermission()
+
+const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
+const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
+
 const mappings = ref<SymbolMapping[]>([])
 
 /// 系统支持的平台（后端枚举的平台符号 + 有没有目录实现）。
@@ -363,7 +377,16 @@ function ratioTone(ratio: number | null): string {
   return 'rgb(var(--danger-6))'
 }
 
-onMounted(load)
+onMounted(async () => {
+  // 权限缓存按会话共享：进来先拉一次，按钮状态才与当前会话一致
+  try {
+    await refreshPermissions()
+  } catch (error) {
+    console.warn('读取权限失败，本页按钮将按无权限处理', error)
+  }
+
+  await load()
+})
 </script>
 
 <template>
@@ -403,16 +426,32 @@ onMounted(load)
             </a-option>
           </a-select>
           <a-button size="small" :loading="loading" @click="load">刷新</a-button>
-          <a-button size="small" :loading="scanning" :disabled="!canEditMappings" @click="scan">
+          <a-button
+            size="small"
+            :loading="scanning"
+            :disabled="!canEditMappings || !canEdit"
+            :title="canEdit ? '' : '需要「标的映射」的管理权限（编辑）'"
+            @click="scan"
+          >
             扫描被观察的池
           </a-button>
-          <a-button type="primary" size="small" :disabled="!canEditMappings" @click="openForm(null)">
+          <a-button
+            type="primary"
+            size="small"
+            :disabled="!canEditMappings || !canEdit"
+            :title="canEdit ? '' : '需要「标的映射」的管理权限（编辑）'"
+            @click="openForm(null)"
+          >
             登记映射
           </a-button>
         </a-space>
       </template>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" />
+
+      <div v-if="!canEdit && !canDelete" class="readonly-line">
+        当前账号对本页只有查看权限——不能扫描、登记、修正或删除映射。
+      </div>
 
       <div class="hint-line">
         跟单员收到信号时先查这张表：<b>一次本地读，不打网络</b>；<b>表里没有的就同名直接用</b>。
@@ -573,9 +612,28 @@ onMounted(load)
           <a-table-column title="操作" :width="160" align="center">
             <template #cell="{ record }">
               <a-space :size="10">
-                <a-link @click="openForm(record)">修正</a-link>
-                <a-link @click="toggle(record)">{{ record.isEnabled ? '停用' : '启用' }}</a-link>
-                <a-link status="danger" @click="requestDelete(record)">删除</a-link>
+                <a-link
+                  :disabled="!canEdit"
+                  :title="canEdit ? '' : '需要「标的映射」的管理权限（编辑）'"
+                  @click="openForm(record)"
+                >
+                  修正
+                </a-link>
+                <a-link
+                  :disabled="!canEdit"
+                  :title="canEdit ? '' : '需要「标的映射」的管理权限（编辑）'"
+                  @click="toggle(record)"
+                >
+                  {{ record.isEnabled ? '停用' : '启用' }}
+                </a-link>
+                <a-link
+                  status="danger"
+                  :disabled="!canDelete"
+                  :title="canDelete ? '' : '需要「标的映射」的管理权限（删除）'"
+                  @click="requestDelete(record)"
+                >
+                  删除
+                </a-link>
               </a-space>
             </template>
           </a-table-column>
@@ -787,6 +845,13 @@ onMounted(load)
   font-size: 12px;
   color: var(--color-text-3);
   line-height: 1.8;
+}
+
+/* 只在该页确实有被禁用的按钮时才显示（见模板里的判断） */
+.readonly-line {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: rgb(var(--warning-6));
 }
 
 

@@ -11,6 +11,7 @@ import {
   type LivePosition,
 } from '@/api/client'
 import { useLiveAccount } from '@/composables/useMonitorHub'
+import { usePermission } from '@/composables/usePermission'
 import HeaderHint from '@/components/HeaderHint.vue'
 import LineChart from '@/components/LineChart.vue'
 import MetricTile from '@/components/MetricTile.vue'
@@ -31,6 +32,18 @@ import { formatDateTime, formatNumber, formatPercent, formatUsd } from '@/utils/
 /// 只有这个口径下"跟单能不能赚"才有确定答案，因为止盈止损藏在带单员手里，
 /// 跟单者只能继承它的进出场。换成"每个信号固定下 N 单位"就必须自己发明一套
 /// 出场规则，那测的就不是跟单，而是自己的策略了。
+
+/// 本页自身的权限键，与「跟单」列表同一份（服务端按 `menu:{code}` 生成，前端只读不写）。
+///
+/// 详情页承载了改本金/启停/手动平仓（edit）与删除跟单员（delete）四类写口——
+/// 手动平仓是**真实下单**，但语义上仍是"改这个跟单员的状态"，所以同样归 edit。
+const PAGE_PERMISSION = 'menu:copy-list'
+
+const { can, refresh: refreshPermissions } = usePermission()
+
+const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
+const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
+
 const route = useRoute()
 const router = useRouter()
 
@@ -582,7 +595,16 @@ async function remove(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  // 权限缓存按会话共享：进来先拉一次，按钮状态才与当前会话一致
+  try {
+    await refreshPermissions()
+  } catch (error) {
+    console.warn('读取权限失败，本页按钮将按无权限处理', error)
+  }
+
+  await load()
+})
 
 // 从卡片 A 跳到卡片 B 时组件不会重建，得跟着路由参数重新取数
 watch(followerId, load)
@@ -641,21 +663,52 @@ watch(followerId, load)
             上限 {{ formatUsd(capitalMax) }}（该账号的可用保证金）
           </span>
 
-          <a-button type="primary" :loading="saving" @click="requestConfigure(true)">
+          <a-button
+            type="primary"
+            :disabled="!canEdit"
+            :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+            :loading="saving"
+            @click="requestConfigure(true)"
+          >
             重设本金并继续
           </a-button>
 
-          <a-button v-if="follower.isActive" :loading="saving" @click="requestConfigure(false)">
+          <a-button
+            v-if="follower.isActive"
+            :disabled="!canEdit"
+            :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+            :loading="saving"
+            @click="requestConfigure(false)"
+          >
             暂停
           </a-button>
-          <a-button v-else :loading="saving" @click="requestConfigure(true)">继续</a-button>
+          <a-button
+            v-else
+            :disabled="!canEdit"
+            :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+            :loading="saving"
+            @click="requestConfigure(true)"
+          >
+            继续
+          </a-button>
 
           <a-button :loading="loading" @click="load">刷新</a-button>
 
-          <a-link status="danger" @click="deleteOpen = true">删除跟单员</a-link>
+          <a-link
+            status="danger"
+            :disabled="!canDelete"
+            :title="canDelete ? '' : '需要「跟单」的管理权限（删除）'"
+            @click="deleteOpen = true"
+          >
+            删除跟单员
+          </a-link>
         </a-space>
 
         <a-alert v-if="errorMessage" type="error" :title="errorMessage" style="margin-top: 12px" />
+
+        <div v-if="!canEdit && !canDelete" class="readonly-line">
+          当前账号对本页只有查看权限——不能改本金、启停、平仓或删除跟单员。
+        </div>
 
         <a-alert
           v-if="!follower.leadIsEnabled"
@@ -952,6 +1005,8 @@ watch(followerId, load)
                   v-if="record.live && record.live.pair"
                   size="mini"
                   status="danger"
+                  :disabled="!canEdit"
+                  :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
                   @click="record.live && openClose(record.live)"
                 >
                   平仓
@@ -1450,6 +1505,13 @@ watch(followerId, load)
 </template>
 
 <style scoped>
+/* 只在该页确实有被禁用的按钮时才显示（见模板里的判断） */
+.readonly-line {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgb(var(--warning-6));
+}
+
 /* 原因压成一行：超出就用省略号，全文在悬停提示里。
    为什么不用整段换行：原因里带着价与步长，完整摊开会把这一列撑成三行，
    整张表被它带着一起变高，而它并不是每行都要读的字段 */

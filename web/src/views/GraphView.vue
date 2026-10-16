@@ -208,22 +208,35 @@ const tagScale = computed(() => {
 
 // ── 数据 ───────────────────────────────────────────────
 
+/// 本次加载里"没读到"的数据源。三份数据来自三个不同的菜单权限点，
+/// **只授了「总览」的账号读不到带单员/跟单是正常的降级**，不该让整页变成错误页：
+/// 把没读到的那几块说清楚，其余照常画。
+const missingSources = ref('')
+
 async function load(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
+  missingSources.value = ''
 
   try {
-    // 三份数据互不依赖，并行取。池列表最大（三百多个池），不该拖住另外两份
+    // 三份数据互不依赖，并行取。池列表最大（三百多个池），不该拖住另外两份。
+    // 每一份**单独容错**：403（没有对应权限）或网络故障只影响它自己
     const [poolRows, leadRows, followerRows] = await Promise.all([
-      api.listPools('user'),
-      api.leadTraders(),
-      api.followers(),
+      api.listPools('user').catch(() => null),
+      api.leadTraders().catch(() => null),
+      api.followers().catch(() => null),
     ])
 
+    const missing: string[] = []
+    if (poolRows === null) missing.push('池列表')
+    if (leadRows === null) missing.push('带单员')
+    if (followerRows === null) missing.push('跟单')
+    missingSources.value = missing.join('、')
+
     // 池按总资产降序：标签云里"大小"要有个一致的方向，从左上往右下递减最自然
-    pools.value = [...poolRows].sort((a, b) => b.totalAssetValue - a.totalAssetValue)
-    leads.value = [...leadRows].sort((a, b) => a.accountIndex - b.accountIndex)
-    followers.value = [...followerRows].sort((a, b) => a.id - b.id)
+    pools.value = poolRows === null ? [] : [...poolRows].sort((a, b) => b.totalAssetValue - a.totalAssetValue)
+    leads.value = leadRows === null ? [] : [...leadRows].sort((a, b) => a.accountIndex - b.accountIndex)
+    followers.value = followerRows === null ? [] : [...followerRows].sort((a, b) => a.id - b.id)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -277,6 +290,12 @@ const modeLabel = (mode: string): string => copyModeLabel(mode)
       </template>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" />
+
+      <a-alert
+        v-if="missingSources"
+        type="warning"
+        :title="`以下数据本次未读到：${missingSources}——多数情况是当前账号没有对应菜单的查看权限`"
+      />
 
       <div class="intro">
         <b>池</b>是平台上的全部可选对象；<b>带单员</b>是你挑出来持续观察的池——它盯着池子的持仓与成交，
