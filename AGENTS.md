@@ -67,7 +67,9 @@ Lighter 的池分析面（库的 socket 只封了 `account_all`/`account_all_ass
 
 - 使用 C# 14 惯用法：primary constructors、collection expressions `[]`、raw string literals（多行 JSON / SQL）、`required` 成员、records（不可变 DTO）、`sealed`（无继承意图）。
 - 只用 .NET 10 稳定 API。不引入实验性特性。
-- 第三方依赖最小化：能用框架能力解决的（EF Core、ASP.NET Core、System.Text.Json、System.Net.WebSockets）不引额外包。**唯一例外是交易所对接**：那一层统一用 CryptoClients.Net——自研的签名、时间同步、限流与重连是更容易写错、也更难自己维护的部分。
+- 第三方依赖最小化：能用框架能力解决的（EF Core、ASP.NET Core、System.Text.Json、System.Net.WebSockets）不引额外包。**例外只有两处，都在下面写明换来的是什么**：
+  - **交易所对接**：那一层统一用 CryptoClients.Net——自研的签名、时间同步、限流与重连是更容易写错、也更难自己维护的部分。
+  - **授权判定**：`Casbin.NET`（见 `docs/PERMISSIONS.md`）——它换掉的是自研"角色→菜单→动作"的判定与角色继承；代价是它会带入 13 个 `Microsoft.Extensions.*` 传递包（`Directory.Packages.props` 已把这 13 个钉到与运行时对齐的 10.0.10，别删那些钉版）。
 - 提交前检查：是否有更现代的写法？是否有更稳的实现？二者冲突时以「稳」优先。
 
 ### 铁律 4：测试兜底（Tests as Guarantee）
