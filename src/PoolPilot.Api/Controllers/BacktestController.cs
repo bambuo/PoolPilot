@@ -1,14 +1,22 @@
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
 using PoolPilot.Domain.ValueObjects;
 
 namespace PoolPilot.Api.Controllers;
 
-/// <summary>回测：池子 / 跟单 / 直接入池三方净值对照。</summary>
+/// <summary>
+/// 回测：池子 / 跟单 / 直接入池三方净值对照。
+///
+/// 挂「回测面板」的 <c>edit</c>（而不是 <c>view</c>）：跑一次回测会对外拉净值序列，
+/// 是一次有副作用的对外请求——口径已定（见 docs/PERMISSIONS.md）。
+/// </summary>
 [ApiController]
 [Route("api/backtest")]
+[RequirePermission(PermissionKeys.Backtest, MenuActions.Edit)]
 public sealed class BacktestController(RunBacktestUseCase runBacktest) : ControllerBase
 {
     /// <param name="accountIndex">被跟的池。</param>

@@ -1,15 +1,23 @@
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
 using PoolPilot.Domain.ValueObjects;
 
 namespace PoolPilot.Api.Controllers;
 
-/// <summary>池列表与详情。Api 层是薄壳：绑定参数 → 调用用例 → 返回 DTO。</summary>
+/// <summary>
+/// 池列表与详情。Api 层是薄壳：绑定参数 → 调用用例 → 返回 DTO。
+///
+/// 整组挂「池列表」的 <c>view</c>：详情（<c>/api/pools/{accountIndex}</c>）不另立权限点，
+/// 一律挂父菜单（已定口径，见 docs/PERMISSIONS.md）。
+/// </summary>
 [ApiController]
 [Route("api/pools")]
+[RequirePermission(PermissionKeys.Pools, MenuActions.View)]
 public sealed class PoolsController(
     GetPoolListUseCase listPools,
     GetPoolDetailUseCase getDetail) : ControllerBase

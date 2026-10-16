@@ -81,11 +81,11 @@ internal sealed class StubGroupManager : IGroupManager
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
 
-internal sealed class StubHubCallerContext(string connectionId = "test-connection") : HubCallerContext
+internal sealed class StubHubCallerContext(string? userIdentifier = null) : HubCallerContext
 {
-    public override string ConnectionId { get; } = connectionId;
+    public override string ConnectionId { get; } = "test-connection";
 
-    public override string? UserIdentifier => null;
+    public override string? UserIdentifier { get; } = userIdentifier;
 
     public override ClaimsPrincipal? User => null;
 
@@ -95,7 +95,8 @@ internal sealed class StubHubCallerContext(string connectionId = "test-connectio
 
     public override IFeatureCollection Features { get; } = new FeatureCollection();
 
-    public override void Abort()
-    {
-    }
+    /// <summary>是否被拒绝连接。<c>OnConnectedAsync</c> 的准入分支靠它断言。</summary>
+    public bool Aborted { get; private set; }
+
+    public override void Abort() => Aborted = true;
 }

@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
 
 namespace PoolPilot.Api.Controllers;
 
@@ -20,12 +22,14 @@ public sealed class LeadTradersController(
 {
     /// <summary>全部带单员：配置状态、此刻是否在收推送、订阅数与信号产量。</summary>
     [HttpGet]
+    [RequirePermission(PermissionKeys.Leads, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<LeadTraderDto>>> List(
         CancellationToken cancellationToken = default) =>
         Ok(await list.ExecuteAsync(cancellationToken).ConfigureAwait(false));
 
     /// <summary>读取单个带单员。</summary>
     [HttpGet("{accountIndex:long}")]
+    [RequirePermission(PermissionKeys.Leads, MenuActions.View)]
     public async Task<ActionResult<LeadTraderDto>> Get(
         long accountIndex,
         CancellationToken cancellationToken = default)
@@ -47,6 +51,7 @@ public sealed class LeadTradersController(
     /// 该池若已有带单员则只改开关。
     /// </summary>
     [HttpPut("{accountIndex:long}")]
+    [RequirePermission(PermissionKeys.Leads, MenuActions.Edit)]
     public async Task<ActionResult<LeadTraderDto>> Configure(
         long accountIndex,
         [FromBody] ConfigureLeadTraderRequest request,
@@ -61,6 +66,7 @@ public sealed class LeadTradersController(
 
     /// <summary>停止观察并删除。还有跟单员订阅时返回 400。</summary>
     [HttpDelete("{accountIndex:long}")]
+    [RequirePermission(PermissionKeys.Leads, MenuActions.Delete)]
     public async Task<IActionResult> Delete(
         long accountIndex,
         CancellationToken cancellationToken = default)

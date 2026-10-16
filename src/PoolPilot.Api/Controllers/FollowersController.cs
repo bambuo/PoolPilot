@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
 
 namespace PoolPilot.Api.Controllers;
 
@@ -17,6 +19,10 @@ namespace PoolPilot.Api.Controllers;
 ///
 /// 与 <c>/api/monitor/ledger</c> 的分工同理：那边量的是"每一腿差几个基点"（池子级），
 /// 这边给的是完整账户会计（跟单员级）。
+///
+/// 整组挂「跟单」这一个权限点（<c>menu:copy-list</c>）：读（列表 / 详情 / 实盘账户 / 实盘流水）
+/// 用 <c>view</c>，写（新建 / 改本金启停 / 手动平仓）用 <c>edit</c>，删用 <c>delete</c>。
+/// 详情不另立权限点，一律挂父菜单（已定口径，见 docs/PERMISSIONS.md）。
 /// </summary>
 [ApiController]
 [Route("api/followers")]
@@ -32,6 +38,7 @@ public sealed class FollowersController(
 {
     /// <summary>全部跟单员的卡片摘要（不带流水与曲线）。</summary>
     [HttpGet]
+    [RequirePermission(PermissionKeys.CopyList, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<FollowerSummaryDto>>> List(
         CancellationToken cancellationToken = default) =>
         Ok(await list.ExecuteAsync(cancellationToken).ConfigureAwait(false));
@@ -43,6 +50,7 @@ public sealed class FollowersController(
     /// 实盘跟单员没有那份账；这一份才是"钱现在是什么样"。
     /// </summary>
     [HttpGet("{id:long}/live-account")]
+    [RequirePermission(PermissionKeys.CopyList, MenuActions.View)]
     public async Task<ActionResult<LiveAccountDto>> LiveAccount(
         long id,
         CancellationToken cancellationToken = default) =>
@@ -56,6 +64,7 @@ public sealed class FollowersController(
     /// 这一单会记进实盘流水并标明 `manual`。
     /// </summary>
     [HttpPost("{id:long}/live-positions/close")]
+    [RequirePermission(PermissionKeys.CopyList, MenuActions.Edit)]
     public async Task<ActionResult<LiveOrderDto>> ClosePosition(
         long id,
         [FromBody] CloseLivePositionRequest request,
@@ -74,6 +83,7 @@ public sealed class FollowersController(
     /// 实盘的真实持仓与盈亏不在这里——那以交易所的账户状态为准，本系统不另算一份。
     /// </summary>
     [HttpGet("{id:long}/live-orders")]
+    [RequirePermission(PermissionKeys.CopyList, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<LiveOrderDto>>> LiveOrders(
         long id,
         [FromQuery] int limit = 200,
@@ -82,6 +92,7 @@ public sealed class FollowersController(
 
     /// <summary>读取跟单员状态。不存在时返回 404，让界面区分"没有这个跟单员"与"有但没成交"。</summary>
     [HttpGet("{id:long}")]
+    [RequirePermission(PermissionKeys.CopyList, MenuActions.View)]
     public async Task<ActionResult<FollowerDto>> Get(long id, CancellationToken cancellationToken = default)
     {
         FollowerDto? follower = await get.ExecuteAsync(id, cancellationToken).ConfigureAwait(false);
@@ -93,6 +104,7 @@ public sealed class FollowersController(
 
     /// <summary>开始跟单：新建一个跟单员订阅某个带单员。该池没有带单员时会自动补一个。</summary>
     [HttpPost]
+    [RequirePermission(PermissionKeys.CopyList, MenuActions.Edit)]
     public async Task<ActionResult<FollowerDto>> Create(
         [FromBody] CreateFollowerRequest request,
         CancellationToken cancellationToken = default)
@@ -106,6 +118,7 @@ public sealed class FollowersController(
 
     /// <summary>改本金或启停。**改动本金会清空该跟单员的历史流水**，理由见用例说明。</summary>
     [HttpPut("{id:long}")]
+    [RequirePermission(PermissionKeys.CopyList, MenuActions.Edit)]
     public async Task<ActionResult<FollowerDto>> Update(
         long id,
         [FromBody] UpdateFollowerRequest request,
@@ -118,6 +131,7 @@ public sealed class FollowersController(
 
     /// <summary>删除跟单员及其流水。**不影响带单员是否继续观察**——那正是这次拆分的目的。</summary>
     [HttpDelete("{id:long}")]
+    [RequirePermission(PermissionKeys.CopyList, MenuActions.Delete)]
     public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken = default)
     {
         await delete.ExecuteAsync(id, cancellationToken).ConfigureAwait(false);

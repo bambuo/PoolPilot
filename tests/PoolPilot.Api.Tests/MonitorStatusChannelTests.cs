@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging.Abstractions;
+
 using PoolPilot.Api.Hubs;
 using PoolPilot.Api.Tests.Fakes;
 using PoolPilot.Application.Abstractions;
@@ -24,6 +26,9 @@ public sealed class MonitorStatusChannelTests
         SubscribedChannels = ["account_all_positions/281474976552443"],
         LastMessageAt = lastMessageAt,
     };
+
+    /// <summary>准入总是通过的判定器：这一组测的是"状态补发"，不是准入。</summary>
+    private static RecordingPermissionEvaluator PermissiveEvaluator() => new((_, _) => true);
 
     [TestMethod]
     public void Broadcast_WithStatus_RemembersItSoLateClientsCanReadIt()
@@ -64,7 +69,7 @@ public sealed class MonitorStatusChannelTests
         broadcaster.BroadcastStatusAsync(Status("first_connect", isConnected: true)).GetAwaiter().GetResult();
         proxy.Sent.Clear();
 
-        MonitorHub hub = new(broadcaster)
+        MonitorHub hub = new(broadcaster, PermissiveEvaluator(), NullLogger<MonitorHub>.Instance)
         {
             Clients = new RecordingHubClients(proxy),
             Context = new StubHubCallerContext(),
@@ -85,7 +90,7 @@ public sealed class MonitorStatusChannelTests
         // Arrange —— 监控服务还没跑起来时不该编造状态
         RecordingClientProxy proxy = new();
         SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)));
-        MonitorHub hub = new(broadcaster)
+        MonitorHub hub = new(broadcaster, PermissiveEvaluator(), NullLogger<MonitorHub>.Instance)
         {
             Clients = new RecordingHubClients(proxy),
             Context = new StubHubCallerContext(),

@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
 
 namespace PoolPilot.Api.Controllers;
 
@@ -17,6 +19,10 @@ namespace PoolPilot.Api.Controllers;
 ///
 /// ⚠️ 本系统目前不下单，凭据暂时没有任何消费方；它是为将来接实盘准备的一步。
 /// 这句话也写在界面上——否则使用者会以为配好就能自动交易。
+///
+/// 整组挂「交易所」这一个权限点：读（列表 / 符号映像）用 <c>view</c>、写（新建 / 修改 / 连通性自检 /
+/// 实盘下单规划）用 <c>edit</c>、删除用 <c>delete</c>（"删=delete"是全站一致的粗分）。
+/// 「自检」与「下单规划」都算对外请求（会打到交易所），所以归 <c>edit</c> 而不是 <c>view</c>。
 /// </summary>
 [ApiController]
 [Route("api/exchanges")]
@@ -31,12 +37,14 @@ public sealed class ExchangesController(
 {
     /// <summary>全部交易所配置（不含任何凭据字段）。</summary>
     [HttpGet]
+    [RequirePermission(PermissionKeys.Exchanges, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<ExchangeConfigDto>>> List(
         CancellationToken cancellationToken = default) =>
         Ok(await list.ExecuteAsync(cancellationToken).ConfigureAwait(false));
 
     /// <summary>新建。凭据可选；给了就按原样保存（明文）。</summary>
     [HttpPost]
+    [RequirePermission(PermissionKeys.Exchanges, MenuActions.Edit)]
     public async Task<ActionResult<ExchangeConfigDto>> Create(
         [FromBody] CreateExchangeRequest request,
         CancellationToken cancellationToken = default)
@@ -50,6 +58,7 @@ public sealed class ExchangesController(
 
     /// <summary>修改。凭据是**三态**：不传 = 保持原样，空串 = 清除，有值 = 换成新的。</summary>
     [HttpPut("{id:long}")]
+    [RequirePermission(PermissionKeys.Exchanges, MenuActions.Edit)]
     public async Task<ActionResult<ExchangeConfigDto>> Update(
         long id,
         [FromBody] UpdateExchangeRequest request,
@@ -62,6 +71,7 @@ public sealed class ExchangesController(
 
     /// <summary>删除（连同它的凭据密文）。</summary>
     [HttpDelete("{id:long}")]
+    [RequirePermission(PermissionKeys.Exchanges, MenuActions.Delete)]
     public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken = default)
     {
         await delete.ExecuteAsync(id, cancellationToken).ConfigureAwait(false);
@@ -76,6 +86,7 @@ public sealed class ExchangesController(
     /// "钥匙不对"是使用者要看到的结果，不是服务器故障。
     /// </summary>
     [HttpPost("{id:long}/probe")]
+    [RequireAnyPermission(PermissionKeys.Exchanges, MenuActions.Edit, PermissionKeys.CopyList, MenuActions.Edit)]
     public async Task<ActionResult<ExchangeProbeDto>> Probe(
         long id,
         CancellationToken cancellationToken = default) =>
@@ -88,6 +99,7 @@ public sealed class ExchangesController(
     /// 会被价格量级检查挡下并给出原因。
     /// </summary>
     [HttpGet("{id:long}/symbol-map")]
+    [RequirePermission(PermissionKeys.Exchanges, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<MarketMappingDto>>> SymbolMap(
         long id,
         [FromQuery] long pool,
@@ -103,6 +115,7 @@ public sealed class ExchangesController(
     /// 参数形状"整条链验穿；实盘路径上任何与下单参数有关的改动都该先过它。
     /// </summary>
     [HttpPost("live-order/plan")]
+    [RequirePermission(PermissionKeys.Exchanges, MenuActions.Edit)]
     public async Task<ActionResult<LiveOrderPlanDto>> Plan(
         [FromBody] LiveOrderPlanRequest request,
         CancellationToken cancellationToken = default)

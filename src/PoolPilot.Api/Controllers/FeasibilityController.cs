@@ -1,15 +1,20 @@
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
 using PoolPilot.Domain.ValueObjects;
 
 namespace PoolPilot.Api.Controllers;
 
-/// <summary>规模门槛：给定本金，能否跟得动这个池。</summary>
+/// <summary>
+/// 规模门槛：给定本金，能否跟得动这个池。整组挂「规模门槛」的 <c>view</c>。
+/// </summary>
 [ApiController]
 [Route("api/feasibility")]
+[RequirePermission(PermissionKeys.Feasibility, MenuActions.View)]
 public sealed class FeasibilityController(EvaluateSizeFeasibilityUseCase evaluate) : ControllerBase
 {
     /// <param name="accountIndex">被跟的池。</param>
@@ -52,9 +57,16 @@ public sealed class FeasibilityController(EvaluateSizeFeasibilityUseCase evaluat
     }
 }
 
-/// <summary>市场行情：盘口与合约规格，供规模门槛页与漏损展示使用。</summary>
+/// <summary>
+/// 市场行情：盘口与合约规格，供规模门槛页与漏损展示使用。
+///
+/// 挂「规模门槛」的 <c>view</c>：它读的是 Lighter 的公开盘口，服务的是"算不算得动"这一档判断，
+/// 与规模门槛是同一件事的两个面。⚠️ 前端当前**没有页面调用它**（<c>api.client.ts</c> 里
+/// 定义了 <c>marketQuote</c> 但没有调用点）——口径仍按签字表挂父菜单，等有页面用起来时无需再改门。
+/// </summary>
 [ApiController]
 [Route("api/markets")]
+[RequirePermission(PermissionKeys.Feasibility, MenuActions.View)]
 public sealed class MarketsController(ILighterPoolsClient client) : ControllerBase
 {
     /// <summary>读取指定市场的盘口与规格。</summary>

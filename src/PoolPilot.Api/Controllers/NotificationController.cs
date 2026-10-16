@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
 
 namespace PoolPilot.Api.Controllers;
 
@@ -13,6 +15,9 @@ namespace PoolPilot.Api.Controllers;
 ///
 /// 本控制器**不标 AllowAnonymous**：通知配置里有 SMTP 口令，它必须跟着全局策略
 /// 一起被登录挡住（Program.cs 里 MapControllers().RequireAuthorization()）。
+///
+/// 整组挂「通知」这一个权限点：读（通道 / 样板 / 投递记录）用 <c>view</c>、
+/// 写（建改通道 / 改样板 / 发测试信）用 <c>edit</c>、删用 <c>delete</c>。
 /// </summary>
 [ApiController]
 [Route("api/notifications")]
@@ -27,11 +32,13 @@ public sealed class NotificationController(
     ListNotificationLogsUseCase listLogs) : ControllerBase
 {
     [HttpGet("providers")]
+    [RequirePermission(PermissionKeys.Notifications, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<NotificationProviderDto>>> ListProviders(
         CancellationToken cancellationToken = default) =>
         Ok(await listProviders.ExecuteAsync(cancellationToken).ConfigureAwait(false));
 
     [HttpPost("providers")]
+    [RequirePermission(PermissionKeys.Notifications, MenuActions.Edit)]
     public async Task<ActionResult<NotificationProviderDto>> CreateProvider(
         NotificationProviderUpsertDto request,
         CancellationToken cancellationToken = default)
@@ -46,6 +53,7 @@ public sealed class NotificationController(
     }
 
     [HttpPut("providers/{id:long}")]
+    [RequirePermission(PermissionKeys.Notifications, MenuActions.Edit)]
     public async Task<ActionResult<NotificationProviderDto>> UpdateProvider(
         long id,
         NotificationProviderUpsertDto request,
@@ -57,6 +65,7 @@ public sealed class NotificationController(
     }
 
     [HttpDelete("providers/{id:long}")]
+    [RequirePermission(PermissionKeys.Notifications, MenuActions.Delete)]
     public async Task<IActionResult> DeleteProvider(long id, CancellationToken cancellationToken = default)
     {
         await deleteProvider.ExecuteAsync(id, cancellationToken).ConfigureAwait(false);
@@ -66,17 +75,20 @@ public sealed class NotificationController(
 
     /// <summary>用这条通道发一封测试邮件。发失败**不是 5xx**：结果里带着 SMTP 的原话。</summary>
     [HttpPost("providers/{id:long}/test")]
+    [RequirePermission(PermissionKeys.Notifications, MenuActions.Edit)]
     public async Task<ActionResult<NotificationDeliveryDto>> TestProvider(
         long id,
         CancellationToken cancellationToken = default) =>
         Ok(await sendTest.ExecuteAsync(id, cancellationToken).ConfigureAwait(false));
 
     [HttpGet("templates")]
+    [RequirePermission(PermissionKeys.Notifications, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<NotificationTemplateDto>>> ListTemplates(
         CancellationToken cancellationToken = default) =>
         Ok(await listTemplates.ExecuteAsync(cancellationToken).ConfigureAwait(false));
 
     [HttpPut("templates/{purpose}")]
+    [RequirePermission(PermissionKeys.Notifications, MenuActions.Edit)]
     public async Task<ActionResult<NotificationTemplateDto>> UpdateTemplate(
         string purpose,
         NotificationTemplateUpsertDto request,
@@ -88,6 +100,7 @@ public sealed class NotificationController(
     }
 
     [HttpGet("logs")]
+    [RequirePermission(PermissionKeys.Notifications, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<NotificationLogDto>>> ListLogs(
         [FromQuery] string? purpose = null,
         CancellationToken cancellationToken = default) =>

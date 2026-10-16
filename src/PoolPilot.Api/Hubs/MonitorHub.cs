@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.SignalR;
 
 using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.Dtos;
+using PoolPilot.Domain.Constants;
 
 namespace PoolPilot.Api.Hubs;
 
@@ -20,14 +21,37 @@ namespace PoolPilot.Api.Hubs;
 /// <see cref="OnConnectedAsync"/> 会向新连上来的客户端补发一次当前状态：
 /// 状态只在**变化**时广播，而浏览器可能在所有变化之后才打开页面，
 /// 不补发的话新页面会一直停在"未知"——那和"监控断了"长得一模一样。
+///
+/// **准入**：连接不再只是"登录即可"。监控推送的内容是**全量广播**（<c>Clients.All</c>，
+/// 不会逐条按收件人过滤），所以在 <see cref="OnConnectedAsync"/> 里加一道
+/// <c>menu:graph</c> 的 <c>view</c> 判定：没有「总览」页权限的连接直接
+/// <see cref="HubCallerContext.Abort()"/>。这不是"藏按钮"级别的过滤——内容本身不按人裁剪，
+/// 拒绝连接是唯一能真正挡住内容的做法。
 /// </summary>
-public sealed class MonitorHub(IMonitorBroadcaster broadcaster) : Hub
+public sealed class MonitorHub(
+    IMonitorBroadcaster broadcaster,
+    IPermissionEvaluator permissions,
+    ILogger<MonitorHub> logger) : Hub
 {
     /// <summary>供前端查询当前订阅的池（用于首次加载时展示"正在监控哪些池"）。</summary>
     public Task<string> Ping() => Task.FromResult("pong");
 
     public override async Task OnConnectedAsync()
     {
+        if (!permissions.Has(PermissionKeys.Graph, MenuActions.View))
+        {
+            // 记下"被谁拒的"：UserIdentifier 是会话里的用户 Id（未登录时 Cookie 处理器
+            // 已经拦在外面，走到这里通常意味着登录了但没有「总览」权限）。
+            logger.LogWarning(
+                "拒绝监控 Hub 连接：用户 {UserIdentifier} 没有 {Permission} 的 {Action} 权限",
+                Context.UserIdentifier ?? "匿名",
+                PermissionKeys.Graph,
+                MenuActions.View);
+
+            Context.Abort();
+            return;
+        }
+
         MonitorStatusDto? current = broadcaster.CurrentStatus;
 
         if (current is not null)

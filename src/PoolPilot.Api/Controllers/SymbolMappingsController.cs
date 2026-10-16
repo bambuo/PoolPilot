@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
+using PoolPilot.Domain.Constants;
 
 namespace PoolPilot.Api.Controllers;
 
@@ -14,6 +16,9 @@ namespace PoolPilot.Api.Controllers;
 ///
 /// 另一条纪律：**扫描永不覆盖人工行**（<c>origin=manual</c>）。人把某个标的指到哪是一个判断，
 /// 扫描只补充"表里还没有的"。
+///
+/// 整组挂「标的映射」这一个权限点：读（平台 / 源标的 / 目标合约 / 映射表）用 <c>view</c>，
+/// 写（扫描整理 / 人工登记）用 <c>edit</c>，删用 <c>delete</c>。
 /// </summary>
 [ApiController]
 [Route("api/symbol-mappings")]
@@ -39,6 +44,7 @@ public sealed class SymbolMappingsController(
     /// 没配任何交易所配置时也该能整理、查看映射。
     /// </summary>
     [HttpGet("platforms")]
+    [RequirePermission(PermissionKeys.SymbolMappings, MenuActions.View)]
     public ActionResult<IReadOnlyList<object>> Platforms()
     {
         IReadOnlyList<object> targets =
@@ -63,6 +69,7 @@ public sealed class SymbolMappingsController(
     /// 池子今天没持有某个标的，不代表明天不会——那时映射表里就该已经有一条等着它。
     /// </summary>
     [HttpGet("source-symbols")]
+    [RequirePermission(PermissionKeys.SymbolMappings, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<object>>> SourceSymbols(
         [FromQuery] string? search = null,
         CancellationToken cancellationToken = default)
@@ -86,6 +93,7 @@ public sealed class SymbolMappingsController(
 
     /// <summary>该平台的合约清单（人工登记时选目标合约用；公开数据，不需要凭据）。</summary>
     [HttpGet("symbols")]
+    [RequirePermission(PermissionKeys.SymbolMappings, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<ExchangeSymbolInfo>>> Symbols(
         [FromQuery] string platform,
         [FromQuery] string? search = null,
@@ -111,6 +119,7 @@ public sealed class SymbolMappingsController(
 
     /// <summary>全部映射（可按平台过滤；不传就是全部平台）。</summary>
     [HttpGet]
+    [RequirePermission(PermissionKeys.SymbolMappings, MenuActions.View)]
     public async Task<ActionResult<IReadOnlyList<SymbolMappingDto>>> List(
         [FromQuery] string? platform = null,
         CancellationToken cancellationToken = default) =>
@@ -121,6 +130,7 @@ public sealed class SymbolMappingsController(
     /// 人工行会被跳过并在结果里计数。
     /// </summary>
     [HttpPost("scan")]
+    [RequirePermission(PermissionKeys.SymbolMappings, MenuActions.Edit)]
     public async Task<ActionResult<SymbolMappingScanResultDto>> Scan(
         [FromQuery] string platform,
         CancellationToken cancellationToken = default) =>
@@ -128,6 +138,7 @@ public sealed class SymbolMappingsController(
 
     /// <summary>人工登记或修正一条映射（登记后不再被扫描覆盖）。</summary>
     [HttpPost]
+    [RequirePermission(PermissionKeys.SymbolMappings, MenuActions.Edit)]
     public async Task<ActionResult<SymbolMappingDto>> Save(
         [FromBody] SaveSymbolMappingRequest request,
         CancellationToken cancellationToken = default)
@@ -139,6 +150,7 @@ public sealed class SymbolMappingsController(
 
     /// <summary>删除一条映射。</summary>
     [HttpDelete("{id:long}")]
+    [RequirePermission(PermissionKeys.SymbolMappings, MenuActions.Delete)]
     public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken = default)
     {
         await delete.ExecuteAsync(id, cancellationToken).ConfigureAwait(false);
