@@ -312,18 +312,15 @@ public sealed class Program
                 startupLogger.LogWarning("已建立系统角色 superadmin（超级管理员）");
             }
 
-            if (seeded.MenusSeeded > 0)
+            if (seeded.AddedMenuCodes.Count > 0)
             {
-                startupLogger.LogWarning("菜单表为空，已播种 {Count} 条内置菜单", seeded.MenusSeeded);
-            }
-
-            if (seeded.BackfilledMenuCodes.Count > 0)
-            {
-                // 老库（menus 非空、播种不跑）缺后加的内置菜单：只补这几条 code，存在即跳过。
-                // 刻意不做"内置菜单全量重播"——那会让用户主动删掉的内置菜单每次重启复活
+                // 内置菜单按 code 缺一补一：第一次建库会全量出现在这里，
+                // 之后只有"随新版本加入、这个库还没见过"的那几条（内置菜单不可删，
+                // 所以"缺"只可能是库比代码老）。
                 startupLogger.LogWarning(
-                    "库里缺少后加的内置菜单 {Codes}，已补插",
-                    string.Join("/", seeded.BackfilledMenuCodes));
+                    "内置菜单缺少 {Count} 条，已补建：{Codes}",
+                    seeded.AddedMenuCodes.Count,
+                    string.Join("/", seeded.AddedMenuCodes));
             }
 
             if (seeded.SuperadminBoundToSoleAccount)

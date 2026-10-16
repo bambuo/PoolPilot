@@ -5,24 +5,24 @@ using PoolPilot.Domain.Entities;
 namespace PoolPilot.Application.Tests;
 
 /// <summary>
-/// 启动播种：空库全量播，老库（menus 非空）只走"后加的内置菜单"幂等补插。
+/// 启动播种：内置菜单按 code **缺一补一**（存在即跳过、缺失才插入，幂等）。
 ///
-/// 补插的关键性质有两条：**只补缺的**（存在即跳过）与**只补这几条**（不是内置菜单全量重播——
-/// 那会让用户主动删掉的内置菜单每次重启复活）。
+/// 为什么不是"只在空库播种"：内置菜单现在不可删（见 DeleteMenuUseCase 的守卫），
+/// 于是"库里没有这条"只有一个原因——这个库比代码老或刚建出来。一套"缺就补"就够，
+/// 新加内置菜单时也不必再维护第二份"后加清单"。
 /// </summary>
 [TestClass]
 public sealed class AuthorizationSeedTests
 {
     [TestMethod]
-    public async Task Seed_OnEmptyDatabase_SeedsAllMenusWithoutBackfill()
+    public async Task Seed_OnEmptyDatabase_AddsEveryBuiltInMenu()
     {
         Harness h = new();
 
         AuthorizationSeedResult result = await h.Seed.ExecuteAsync();
 
-        Assert.IsGreaterThan(0, result.MenusSeeded, "空库应当播种内置菜单");
-        Assert.IsEmpty(result.BackfilledMenuCodes, "空库已经拿到了那两个菜单，补插应无事可做");
-        Assert.AreEqual(result.MenusSeeded, h.Menus.Menus.Count);
+        Assert.AreEqual(h.Menus.Menus.Count, result.AddedMenuCodes.Count, "空库应当把内置菜单全部建出来");
+        Assert.IsGreaterThanOrEqualTo(15, result.AddedMenuCodes.Count);
 
         Menu users = h.Menus.Menus.Single(m => m.Code == "system-users");
         Menu roles = h.Menus.Menus.Single(m => m.Code == "system-roles");
@@ -41,7 +41,7 @@ public sealed class AuthorizationSeedTests
     }
 
     [TestMethod]
-    public async Task Seed_OnNonEmptyDatabase_BackfillsOnlyTheLateAddedMenusAndIsIdempotent()
+    public async Task Seed_OnNonEmptyDatabase_AddsOnlyTheMissingMenusAndIsIdempotent()
     {
         Harness h = new();
         Menu system = h.Menus.Seed("system", kind: MenuKinds.Group, sortOrder: 0);
@@ -50,43 +50,39 @@ public sealed class AuthorizationSeedTests
 
         AuthorizationSeedResult first = await h.Seed.ExecuteAsync();
 
-        Assert.AreEqual(0, first.MenusSeeded, "menus 非空时不做全量播种");
-        CollectionAssert.AreEqual(
-            new List<string> { "system-users", "system-roles" },
-            first.BackfilledMenuCodes.ToList());
+        Assert.DoesNotContain("system-menus", first.AddedMenuCodes, "已存在的行不动");
+        Assert.DoesNotContain("graph", first.AddedMenuCodes);
+        Assert.Contains("system-users", first.AddedMenuCodes, "缺的补上");
 
         Menu users = h.Menus.Menus.Single(m => m.Code == "system-users");
-        Assert.AreEqual(system.Id, users.ParentId, "补插的节点挂在现有的「系统」分组下");
+        Assert.AreEqual(system.Id, users.ParentId, "补的节点挂在**现有的**「系统」分组下");
         Assert.AreEqual("/system/users", users.Path);
         Assert.AreEqual("IconUser", users.Icon);
-        Assert.AreEqual(MenuKinds.Menu, users.Kind);
         Assert.AreEqual(11, users.SortOrder);
 
         Menu roles = h.Menus.Menus.Single(m => m.Code == "system-roles");
         Assert.AreEqual(system.Id, roles.ParentId);
-        Assert.AreEqual("/system/roles", roles.Path);
-        Assert.AreEqual("IconUserGroup", roles.Icon);
         Assert.AreEqual(12, roles.SortOrder);
 
         // 再跑一次：存在即跳过，不重复插入
         AuthorizationSeedResult second = await h.Seed.ExecuteAsync();
 
-        Assert.IsEmpty(second.BackfilledMenuCodes, "第二次启动必须无事可做（幂等）");
-        Assert.HasCount(5, h.Menus.Menus);
+        Assert.IsEmpty(second.AddedMenuCodes, "第二次启动必须无事可做（幂等）");
+        Assert.HasCount(15, h.Menus.Menus);
     }
 
     [TestMethod]
-    public async Task Seed_DoesNotResurrectDeletedBuiltInMenus()
+    public async Task Seed_RestoresBuiltInMenuMissingFromTheDatabase()
     {
         Harness h = new();
         h.Menus.Seed("system", kind: MenuKinds.Group);
         h.Menus.Seed("system-menus");
-        h.Menus.Seed("system-users");
-        h.Menus.Seed("system-roles");
-        // 用户主动删掉了一个别的内置菜单（如 graph）：重启时它不能复活
+        h.Menus.Seed("graph");
+        // 库里少了一个内置菜单（如直改库删掉了）：启动时补回来。
+        // 界面上删不掉它——内置菜单有"不可删"的守卫，所以"缺"只可能是库比代码老。
         await h.Seed.ExecuteAsync();
 
-        Assert.IsFalse(h.Menus.Menus.Any(m => m.Code == "graph"), "补插只认后加的那几条 code");
+        Assert.IsTrue(h.Menus.Menus.Any(m => m.Code == "notifications"), "缺失的内置菜单应被补回");
     }
 
     private sealed class Harness

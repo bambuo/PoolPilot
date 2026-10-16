@@ -45,9 +45,9 @@
 | `exchange_configs` | 配置本体。凭据三列（`ApiKey` / `ApiSecret` / `Passphrase`）是**明文** |
 | ~~`app_settings`~~ | 已删除：它只为存放加密主密钥而存在。密钥材料不该以任何形式留在库里，哪怕只是曾经放过它的容器 |
 
-历史库的迁移（`DatabaseSchemaInitializer` 自动完成，幂等）：
-把 `ApiKeyCipher` / `ApiSecretCipher` / `PassphraseCipher` 三列改回本名——
-列名里带 `Cipher` 而内容其实是明文，那是库里的一句假话；并删掉 `app_settings` 表。
+那两件事（三列改回本名、删掉 `app_settings`）在开发库上已经执行完毕，
+相应的一次性迁移代码已按"代码只保留最新状态"移除——`DatabaseSchemaInitializer`
+现在只管建表与补表，不再搬历史数据。
 
 ## 4. 谁在用它
 

@@ -117,7 +117,7 @@ public sealed class GetPermissionsUseCase(
 }
 
 /// <summary>
-/// 首次启动时把授权数据补齐：确保超级管理员角色存在、菜单为空则播种、唯一账号绑定超管。
+/// 启动时把授权数据补齐：确保超级管理员角色存在、内置菜单按 code 缺一补一、唯一账号绑定超管。
 ///
 /// 三件事都在同一个用例里，且**最后统一重建一次策略**：它们是同一批"让系统可用"的动作，
 /// 拆成三个用例只会让调用方（组合根）多写三段编排。
@@ -135,8 +135,7 @@ public sealed class SeedAuthorizationUseCase(
     public async Task<AuthorizationSeedResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         bool roleCreated = await EnsureSuperadminRoleAsync(cancellationToken).ConfigureAwait(false);
-        int menusSeeded = await SeedMenusAsync(cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<string> backfilled = await BackfillMissingMenusAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> addedMenus = await EnsureBuiltInMenusAsync(cancellationToken).ConfigureAwait(false);
         bool superadminBound = await SuperadminBootstrap
             .BindSoleExistingAccountAsync(users, userRoles, cancellationToken)
             .ConfigureAwait(false);
@@ -144,7 +143,7 @@ public sealed class SeedAuthorizationUseCase(
         // 空库也要重建一次：让 Enforcer 至少与（可能为空的）表一致
         await policies.RebuildAsync(cancellationToken).ConfigureAwait(false);
 
-        return new AuthorizationSeedResult(roleCreated, menusSeeded, backfilled, superadminBound);
+        return new AuthorizationSeedResult(roleCreated, addedMenus, superadminBound);
     }
 
     private async Task<bool> EnsureSuperadminRoleAsync(CancellationToken cancellationToken)
@@ -167,56 +166,50 @@ public sealed class SeedAuthorizationUseCase(
         return true;
     }
 
-    private async Task<int> SeedMenusAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// 内置菜单按 code **缺一补一**：存在即跳过（库里那份是事实，标题/排序/动作改动都尊重），
+    /// 缺失才插入——缺失只有两个原因：这个库第一次建，或它比代码老。
+    ///
+    /// 为什么不再分"空库播种 / 老库补插"两套：内置菜单现在**不可删**（见 DeleteMenuUseCase 的守卫），
+    /// 于是"库里没有这条"再也不可能是"使用者主动删的"——一套"缺就补"就够了，
+    /// 新加内置菜单时也不必再维护第二份清单。
+    /// </summary>
+    private async Task<IReadOnlyList<string>> EnsureBuiltInMenusAsync(CancellationToken cancellationToken)
     {
-        if (await menus.CountAsync(cancellationToken).ConfigureAwait(false) > 0)
-        {
-            return 0;
-        }
-
         Dictionary<string, long> idByCode = new(StringComparer.Ordinal);
+        List<string> added = [];
 
         foreach (SeedMenu seed in SeedMenus)
         {
             long? parentId = seed.ParentCode is { } parent && idByCode.TryGetValue(parent, out long pid) ? pid : null;
 
-            Menu created = await InsertMenuAsync(seed, parentId, cancellationToken).ConfigureAwait(false);
-
-            idByCode[seed.Code] = created.Id;
-        }
-
-        return SeedMenus.Length;
-    }
-
-    /// <summary>
-    /// 只补「后加的内置菜单」（<see cref="LateAddedMenus"/>）：**存在即跳过，缺失才插入**。
-    ///
-    /// **刻意不做"内置菜单全量重播"**：播种只在空库跑一次，之后库里的行是事实——
-    /// 用户在界面上主动删掉的内置菜单，全量重播会让它每次重启都复活，
-    /// 而那正是"库里没有这条"与"这条还没被建出来"被混为一谈的结果。
-    /// 只有随新版本引入、旧库里必然不存在的那几条走这条补插通道：
-    /// 它们缺失的原因只有一个——库比代码老。
-    /// </summary>
-    private async Task<IReadOnlyList<string>> BackfillMissingMenusAsync(CancellationToken cancellationToken)
-    {
-        List<string> backfilled = [];
-
-        foreach (SeedMenu seed in LateAddedMenus)
-        {
-            if (await menus.FindByCodeAsync(seed.Code, cancellationToken).ConfigureAwait(false) is not null)
+            if (parentId is null && seed.ParentCode is { } parentCode)
             {
+                // 父节点不在本批新建里：它可能已存在于库中，或还没轮到（清单是父在前、子在后）
+                Menu? existingParent = await menus.FindByCodeAsync(parentCode, cancellationToken).ConfigureAwait(false);
+
+                if (existingParent is not null)
+                {
+                    idByCode[parentCode] = existingParent.Id;
+                    parentId = existingParent.Id;
+                }
+            }
+
+            Menu? existing = await menus.FindByCodeAsync(seed.Code, cancellationToken).ConfigureAwait(false);
+
+            if (existing is not null)
+            {
+                idByCode[seed.Code] = existing.Id;
                 continue;
             }
 
-            long? parentId = seed.ParentCode is { } parentCode
-                ? (await menus.FindByCodeAsync(parentCode, cancellationToken).ConfigureAwait(false))?.Id
-                : null;
+            Menu created = await InsertMenuAsync(seed, parentId, cancellationToken).ConfigureAwait(false);
 
-            await InsertMenuAsync(seed, parentId, cancellationToken).ConfigureAwait(false);
-            backfilled.Add(seed.Code);
+            idByCode[seed.Code] = created.Id;
+            added.Add(seed.Code);
         }
 
-        return backfilled;
+        return added;
     }
 
     private Task<Menu> InsertMenuAsync(SeedMenu seed, long? parentId, CancellationToken cancellationToken) =>
@@ -237,27 +230,20 @@ public sealed class SeedAuthorizationUseCase(
             },
             cancellationToken);
 
-    /// <summary>「用户管理」菜单（后来加的内置菜单，见 <see cref="LateAddedMenus"/>）。</summary>
-    private static readonly SeedMenu SystemUsersMenu =
-        new("system-users", "用户管理", "/system/users", MenuKinds.Menu, "IconUser",
-            [MenuActions.View, MenuActions.Edit], "system", 11);
-
-    /// <summary>「角色管理」菜单（后来加的内置菜单，见 <see cref="LateAddedMenus"/>）。</summary>
-    private static readonly SeedMenu SystemRolesMenu =
-        new("system-roles", "角色管理", "/system/roles", MenuKinds.Menu, "IconUserGroup",
-            [MenuActions.View, MenuActions.Edit, MenuActions.Delete], "system", 12);
-
     /// <summary>
-    /// 内置菜单清单。父在前、子在后（播种时按顺序解析父 Id）。
-    /// 它是"这套系统有哪些页面"的第一份定义；播种之后，库里的行才是事实。
+    /// 内置菜单清单。父在前、子在后（补插时按顺序解析父 Id）。
+    /// 它是"这套系统有哪些页面"的定义；建出来之后，库里的行才是事实
+    /// （标题、图标、排序、可见性、动作这些改动都以库为准，这里只管"缺了才补"）。
     /// </summary>
     private static readonly SeedMenu[] SeedMenus =
     [
         new("system", "系统", null, MenuKinds.Group, "IconSettings", [MenuActions.View], null, 0),
         new("system-menus", "菜单管理", "/system/menus", MenuKinds.Menu, "IconMenu",
             [MenuActions.View, MenuActions.Edit, MenuActions.Delete], "system", 10),
-        SystemUsersMenu,
-        SystemRolesMenu,
+        new("system-users", "用户管理", "/system/users", MenuKinds.Menu, "IconUser",
+            [MenuActions.View, MenuActions.Edit], "system", 11),
+        new("system-roles", "角色管理", "/system/roles", MenuKinds.Menu, "IconUserGroup",
+            [MenuActions.View, MenuActions.Edit, MenuActions.Delete], "system", 12),
         new("graph", "总览", "/graph", MenuKinds.Menu, "IconDashboard", [MenuActions.View], null, 20),
         new("pools", "池列表", "/pools", MenuKinds.Menu, "IconList",
             [MenuActions.View, MenuActions.Edit, MenuActions.Delete], null, 30),
@@ -282,9 +268,6 @@ public sealed class SeedAuthorizationUseCase(
             [MenuActions.View, MenuActions.Edit, MenuActions.Delete], null, 120),
     ];
 
-    /// <summary>「后来才加进来的」内置菜单：老库（menus 非空、播种不跑）靠补插拿到它们。</summary>
-    private static readonly SeedMenu[] LateAddedMenus = [SystemUsersMenu, SystemRolesMenu];
-
     /// <summary>
     /// 内置菜单的 code 集合（从上面两份清单派生，不另存一份会漂移的名单）。
     ///
@@ -294,9 +277,7 @@ public sealed class SeedAuthorizationUseCase(
     /// （播种只在空库跑，补插只看行在不在）。
     /// </summary>
     public static IReadOnlySet<string> BuiltInMenuCodes { get; } =
-        SeedMenus.Select(m => m.Code)
-            .Concat(LateAddedMenus.Select(m => m.Code))
-            .ToHashSet(StringComparer.Ordinal);
+        SeedMenus.Select(m => m.Code).ToHashSet(StringComparer.Ordinal);
 
     private sealed record SeedMenu(
         string Code,
@@ -315,8 +296,7 @@ public sealed class SeedAuthorizationUseCase(
 /// <summary>播种结果。调用方（组合根）据此打日志。</summary>
 public sealed record AuthorizationSeedResult(
     bool SuperadminRoleCreated,
-    int MenusSeeded,
-    IReadOnlyList<string> BackfilledMenuCodes,
+    IReadOnlyList<string> AddedMenuCodes,
     bool SuperadminBoundToSoleAccount);
 
 /// <summary>

@@ -52,15 +52,6 @@ export const router = createRouter({
     // 未登录的人先被送去登录页，而不是从这一页反推出"站内有哪些地址"。
     { path: '/no-access', name: 'no-access', component: knownViewLoader('no-access') },
 
-    // ── 旧地址保留为重定向而非直接删除 ──────────────────────
-    // 这一节原先叫「纸面跟单台账」，已经打开的页面和书签不该因为改名而失效。
-    // 重定向指向的 `/copy` 是动态路由——刷新到 /ledger 时它尚未注册，会先落到兜底、
-    // 由守卫注册完再重放 `/copy`（见守卫里的"重放导航"），因此这里照旧写目标路径即可。
-    { path: '/ledger', redirect: '/copy' },
-    { path: '/ledger/:accountIndex', redirect: (to) => `/copy/${String(to.params.accountIndex)}` },
-    // 「实时监控台」已撤：池详情页打开时现查即可，跟单本身就是后台实时监控，那一页没有存身之处。
-    // 同上，保留重定向而不是让它变成 404 白屏——书签与已打开的页面不该因为撤项而失效。
-    { path: '/monitor', redirect: '/copy' },
     { path: '/', redirect: HOME_PATH },
 
     // 兜底：**未匹配到任何已注册路由**（含刷新深链、无权限路径）统一落无权限页。
