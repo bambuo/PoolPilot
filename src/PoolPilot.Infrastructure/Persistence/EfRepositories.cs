@@ -646,6 +646,25 @@ public sealed class UserRepository(PoolPilotDbContext db) : IUserRepository
     public Task<int> CountAsync(CancellationToken cancellationToken = default) =>
         db.Users.CountAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<long>> ListIdsAsync(CancellationToken cancellationToken = default) =>
+        await db.Users
+            .AsNoTracking()
+            .OrderBy(u => u.Id)
+            .Select(u => u.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<User>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        List<UserRecord> rows = await db.Users
+            .AsNoTracking()
+            .OrderBy(u => u.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return [.. rows.Select(row => row.ToDomain())];
+    }
+
     public async Task<User> CreateAsync(User user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);

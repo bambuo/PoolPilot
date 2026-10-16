@@ -45,6 +45,12 @@ internal sealed class FakeUserRepository : IUserRepository
     public Task<int> CountAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(_users.Count);
 
+    public Task<IReadOnlyList<long>> ListIdsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<long>>([.. _users.Select(u => u.Id)]);
+
+    public Task<IReadOnlyList<User>> ListAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<User>>([.. _users.OrderBy(u => u.Id)]);
+
     public Task<User> CreateAsync(User user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);

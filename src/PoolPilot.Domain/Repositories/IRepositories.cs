@@ -84,6 +84,14 @@ public interface IUserRepository
     /// </summary>
     Task<int> CountAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 全部账号主键。首个账号自动成为超级管理员的判据用它：需要"库里唯一的那个账号是谁"。
+    /// </summary>
+    Task<IReadOnlyList<long>> ListIdsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>全部账号，按主键升序（「用户管理」的列表顺序）。</summary>
+    Task<IReadOnlyList<User>> ListAsync(CancellationToken cancellationToken = default);
+
     /// <summary>新建并返回带库分配主键的账号。</summary>
     Task<User> CreateAsync(User user, CancellationToken cancellationToken = default);
 

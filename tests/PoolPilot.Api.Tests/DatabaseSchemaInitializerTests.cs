@@ -64,7 +64,7 @@ public sealed class DatabaseSchemaInitializerTests
             }
 
             // 模拟"老库"：把后加的表删掉，就像它们引入之前的数据库那样
-            foreach (string table in LeadFollowerTables.Concat(ExchangeTables))
+            foreach (string table in RegrownTables)
             {
                 DropTable(path, table);
             }
@@ -83,7 +83,7 @@ public sealed class DatabaseSchemaInitializerTests
 
                 // 删表会连带删掉该表的索引，所以补建的是"表 + 索引"，数量不止这几个；
                 // 这里不断言具体条数，只断言两件真正重要的事：该补的都补了、不该动的一个没动。
-                foreach (string table in LeadFollowerTables.Concat(ExchangeTables))
+                foreach (string table in RegrownTables)
                 {
                     CollectionAssert.Contains(created.ToList(), table, $"应补建表 {table}");
                 }
@@ -232,8 +232,17 @@ public sealed class DatabaseSchemaInitializerTests
     private static readonly string[] ExchangeTables =
         ["exchange_configs"];
 
+    /// <summary>授权那批后加的表：菜单 / 动作 / 角色 / 两张绑定。
+    /// 它们与别的后加表一样，靠"按模型补建"从老库里长出来。</summary>
+    private static readonly string[] PermissionTables =
+        ["menus", "menu_actions", "roles", "user_roles", "menu_roles"];
+
     private static readonly string[] ExpectedTables =
-        ["pool_events", "copy_fills", .. LeadFollowerTables, .. ExchangeTables];
+        ["pool_events", "copy_fills", .. LeadFollowerTables, .. ExchangeTables, .. PermissionTables];
+
+    /// <summary>老库里会被按模型补建出来的那批表（用于"补表"这条用例）。</summary>
+    private static readonly string[] RegrownTables =
+        [.. LeadFollowerTables, .. ExchangeTables, .. PermissionTables];
 
     /// <summary>造一个"带单员之前的库"：主键为池索引的纸面账户 + 两条流水 + 一个权益点。</summary>
     private static void CreateLegacySchema(string path)

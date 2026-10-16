@@ -17,6 +17,10 @@
 
     <!-- 交易所对接统一走它（元包：Binance.Net / OKX.Net / GateIo.Net / Lighter.Net 一并带来）。 -->
     <PackageReference Include="CryptoClients.Net" />
+
+    <!-- 授权核心（见 Directory.Packages.props 的破例说明）。Casbin 只出现在本层，
+         应用层只认 IPermissionEvaluator / IPolicyWriter 两个抽象。 -->
+    <PackageReference Include="Casbin.NET" />
   </ItemGroup>
 
   <ItemGroup>

@@ -4,6 +4,7 @@ using PoolPilot.Application.UseCases;
 using PoolPilot.Domain.Constants;
 using PoolPilot.Domain.Entities;
 using PoolPilot.Domain.Exceptions;
+using PoolPilot.Domain.Repositories;
 using PoolPilot.Domain.Services;
 using PoolPilot.Domain.ValueObjects;
 
@@ -34,8 +35,62 @@ public sealed class RegistrationTests
                 h.Mailer,
                 h.Logs,
                 h.Clock),
-            new RegisterUserUseCase(h.Users, h.Codes),
+            new RegisterUserUseCase(h.Users, h.UserRoles, h.Codes, h.Policies),
             h);
+    }
+
+    /// <summary>首个账号自动成为超级管理员：它是唯一能进「菜单管理」的人。</summary>
+    [TestMethod]
+    public async Task Register_FirstAccount_IsBoundToSuperadmin()
+    {
+        (RequestRegistrationCodeUseCase request, RegisterUserUseCase register, Harness h) = Build();
+        await request.ExecuteAsync(Email);
+        string code = h.Codes.Peek(EmailAddress.Parse(Email))!;
+
+        await register.ExecuteAsync(new RegisterRequestDto
+        {
+            Email = Email,
+            Code = code,
+            Password = Password,
+            ConfirmPassword = Password,
+        });
+
+        User created = Assert.ContainsSingle(h.Users.Users);
+        UserRoleBinding binding = Assert.ContainsSingle(h.UserRoles.Bindings);
+        Assert.AreEqual(created.Id, binding.UserId);
+        Assert.AreEqual(PermissionSubjects.SuperadminRoleCode, binding.RoleCode);
+        Assert.AreEqual(1, h.Policies.RebuildCount, "绑定了超管就必须重建一次策略，否则第一个账号当场用不了");
+    }
+
+    /// <summary>第二个账号默认**没有任何角色**：注册保持开放，但开放不等于送权限。</summary>
+    [TestMethod]
+    public async Task Register_SecondAccount_GetsNoRole()
+    {
+        (RequestRegistrationCodeUseCase request, RegisterUserUseCase register, Harness h) = Build();
+
+        await request.ExecuteAsync(Email);
+        await register.ExecuteAsync(new RegisterRequestDto
+        {
+            Email = Email,
+            Code = h.Codes.Peek(EmailAddress.Parse(Email))!,
+            Password = Password,
+            ConfirmPassword = Password,
+        });
+
+        const string other = "second@example.com";
+        await request.ExecuteAsync(other);
+        await register.ExecuteAsync(new RegisterRequestDto
+        {
+            Email = other,
+            Code = h.Codes.Peek(EmailAddress.Parse(other))!,
+            Password = Password,
+            ConfirmPassword = Password,
+        });
+
+        Assert.HasCount(2, h.Users.Users);
+        UserRoleBinding binding = Assert.ContainsSingle(h.UserRoles.Bindings);
+        Assert.AreEqual(Email, h.Users.Users.Single(u => u.Id == binding.UserId).Email.Value,
+            "只有第一个账号该被绑成超管");
     }
 
     [TestMethod]
@@ -269,6 +324,10 @@ public sealed class RegistrationTests
         public FakeClock Clock { get; } = new(new DateTimeOffset(2026, 10, 14, 8, 0, 0, TimeSpan.Zero));
 
         public FakeUserRepository Users { get; } = new();
+
+        public FakeUserRoleRepository UserRoles { get; } = new();
+
+        public FakePolicyWriter Policies { get; } = new();
 
         public FakeRegistrationCodeStore Codes { get; } = new();
 

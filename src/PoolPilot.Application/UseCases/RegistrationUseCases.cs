@@ -100,7 +100,9 @@ public sealed class RequestRegistrationCodeUseCase(
 /// </summary>
 public sealed class RegisterUserUseCase(
     IUserRepository users,
-    IRegistrationCodeStore codes)
+    IUserRoleRepository userRoles,
+    IRegistrationCodeStore codes,
+    IPolicyWriter policies)
 {
     public async Task ExecuteAsync(RegisterRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -128,7 +130,7 @@ public sealed class RegisterUserUseCase(
             throw new ArgumentException("验证码不正确或已过期，请重新获取", nameof(request));
         }
 
-        await users.CreateAsync(
+        User created = await users.CreateAsync(
             new User
             {
                 Email = address,
@@ -141,5 +143,19 @@ public sealed class RegisterUserUseCase(
                 CreatedAt = LighterTimestamp.FromMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
             },
             cancellationToken).ConfigureAwait(false);
+
+        // 首个账号自动成为超级管理员（判据与启动播种共用 SuperadminBootstrap，只有一处）。
+        // 之后的账号默认无角色——注册保持开放，但也因此不能顺带拿到任何权限。
+        bool bound = await SuperadminBootstrap
+            .BindNewAccountAsync(created.Id, users, userRoles, cancellationToken)
+            .ConfigureAwait(false);
+
+        // 绑定确实发生时才重建：那是唯一一次"注册动了授权事实源"的时刻。
+        // 少了它，第一个账号要等到下一次写操作才真正拿到超管权限——在界面上表现为
+        // "刚注册完、什么都没改，却进不去菜单管理"，且刷新也不会好。
+        if (bound)
+        {
+            await policies.RebuildAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 }

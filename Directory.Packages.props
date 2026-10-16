@@ -46,6 +46,30 @@
     <PackageVersion Include="Microsoft.OpenApi" Version="2.7.6" />
 
     <!--
+      授权核心：Casbin.NET。**这是「第三方依赖最小化」的第 6 点破例**——
+      用户明确指出 Casbin 是本项目的授权核心（策略模型、匹配、角色继承都由它承载），
+      自研一套等价物是更容易写错、也更难审计的部分。除此之外不引别的授权库。
+
+      ⚠ 该包只发布了 lib/net9.0 资产，会带到 13 个 9.0.0-preview.4 的 Microsoft.Extensions.*
+      传递包。它们**全部钉到 10.0.10**（与既有注释"Microsoft.* 一律锁 10.0.10"一致）：
+      预览版补丁高于本机 runtime 会导致还原后无法运行。下面 13 行即为此清单。
+    -->
+    <PackageVersion Include="Casbin.NET" Version="2.21.3" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.FileExtensions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Ini" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.FileProviders.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.FileProviders.Physical" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Primitives" Version="10.0.10" />
+
+    <!--
       交易所对接：**统一走 CryptoClients.Net**（元包，MIT，net8/9/10）。
       它是本项目「第三方依赖最小化」的唯一例外——它换掉的是自研的签名、时间同步、
       限流、重连与逐字段解析，那些恰恰是最容易写错、也最难自己维护的部分。

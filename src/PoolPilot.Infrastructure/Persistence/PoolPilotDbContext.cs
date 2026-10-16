@@ -53,6 +53,20 @@ public sealed class PoolPilotDbContext(DbContextOptions<PoolPilotDbContext> opti
 
     public DbSet<NotificationLogRecord> NotificationLogs => Set<NotificationLogRecord>();
 
+    // ── 授权：菜单 / 角色 / 两张绑定表 ───────────────────────
+    // 这几张表是 Casbin 策略的**唯一事实源**：没有单独的 casbin_rule 表，
+    // Enforcer 每次写操作后从这里重新投影（见 PermissionPolicyProjection 与 docs/PERMISSIONS.md）。
+    public DbSet<MenuRecord> Menus => Set<MenuRecord>();
+
+    public DbSet<MenuActionRecord> MenuActions => Set<MenuActionRecord>();
+
+    public DbSet<RoleRecord> Roles => Set<RoleRecord>();
+
+    public DbSet<UserRoleRecord> UserRoles => Set<UserRoleRecord>();
+
+    /// <summary>菜单-角色绑定：每个菜单的 p 策略（超管那条由投影叠加）的事实源。</summary>
+    public DbSet<MenuRoleRecord> MenuRoles => Set<MenuRoleRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
@@ -185,6 +199,49 @@ public sealed class PoolPilotDbContext(DbContextOptions<PoolPilotDbContext> opti
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
             entity.HasIndex(e => e.Email).IsUnique();
+        });
+
+        // ── 菜单 ────────────────────────────────────────────────
+        // code 与 permissionKey 各自唯一：前者是人的标识，后者是 Casbin 的对象键。
+        // 两者都由服务端生成且恒有 permissionKey = "menu:" + code，唯一索引把这条不变式钉在库里。
+        modelBuilder.Entity<MenuRecord>(entity =>
+        {
+            entity.ToTable("menus");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.HasIndex(e => e.Code).IsUnique();
+            entity.HasIndex(e => e.PermissionKey).IsUnique();
+        });
+
+        // 动作行：唯一索引 (MenuId, Action) 保证同一个菜单不会写出两条一样的动作
+        modelBuilder.Entity<MenuActionRecord>(entity =>
+        {
+            entity.ToTable("menu_actions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.HasIndex(e => new { e.MenuId, e.Action }).IsUnique();
+        });
+
+        modelBuilder.Entity<RoleRecord>(entity =>
+        {
+            entity.ToTable("roles");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.HasIndex(e => e.Code).IsUnique();
+        });
+
+        // 用户-角色：复合主键，重复绑定在结构上被杜绝
+        modelBuilder.Entity<UserRoleRecord>(entity =>
+        {
+            entity.ToTable("user_roles");
+            entity.HasKey(e => new { e.UserId, e.RoleId });
+        });
+
+        // 菜单-角色：同样是复合主键
+        modelBuilder.Entity<MenuRoleRecord>(entity =>
+        {
+            entity.ToTable("menu_roles");
+            entity.HasKey(e => new { e.MenuId, e.RoleId });
         });
     }
 }
@@ -1163,4 +1220,82 @@ public sealed class NotificationLogRecord
         Error = Error,
         SentAt = LighterTimestamp.FromMilliseconds(SentAtUtc.ToUnixTimeMilliseconds()),
     };
+}
+
+/// <summary>
+/// 菜单表行。
+///
+/// 动作不在本行上：它们各占 <see cref="MenuActionRecord"/> 一行（一个菜单可暴露多个动作，
+/// 且唯一索引 (MenuId, Action) 在结构上禁止重复）。仓储在读取时把两者在内存里接起来，
+/// 一次查询取全部菜单、再一次取全部动作，不做逐菜单的 N+1。
+/// </summary>
+public sealed class MenuRecord
+{
+    public long Id { get; set; }
+
+    public long? ParentId { get; set; }
+
+    public string Code { get; set; } = string.Empty;
+
+    public string Title { get; set; } = string.Empty;
+
+    public string? Path { get; set; }
+
+    public string? Icon { get; set; }
+
+    /// <summary><c>group</c> / <c>menu</c> / <c>hidden</c>。</summary>
+    public string Kind { get; set; } = "menu";
+
+    public int SortOrder { get; set; }
+
+    public bool IsVisible { get; set; }
+
+    /// <summary>Casbin 的对象键，恒等于 <c>"menu:" + Code</c>。</summary>
+    public string PermissionKey { get; set; } = string.Empty;
+
+    public long CreatedAtUtcTicks { get; set; }
+
+    public DateTimeOffset CreatedAtUtc
+    {
+        get => new(CreatedAtUtcTicks, TimeSpan.Zero);
+        set => CreatedAtUtcTicks = value.UtcTicks;
+    }
+}
+
+/// <summary>菜单动作表行。<c>Action</c> 取值域为 <c>view|edit|delete</c>。</summary>
+public sealed class MenuActionRecord
+{
+    public long Id { get; set; }
+
+    public long MenuId { get; set; }
+
+    public string Action { get; set; } = string.Empty;
+}
+
+/// <summary>角色表行。<c>Code</c> 是稳定标识，也是 Casbin 里 <c>role:{Code}</c> 的那一段。</summary>
+public sealed class RoleRecord
+{
+    public long Id { get; set; }
+
+    public string Code { get; set; } = string.Empty;
+
+    public string Title { get; set; } = string.Empty;
+
+    public bool IsSystem { get; set; }
+}
+
+/// <summary>用户-角色绑定表行（复合主键）。</summary>
+public sealed class UserRoleRecord
+{
+    public long UserId { get; set; }
+
+    public long RoleId { get; set; }
+}
+
+/// <summary>菜单-角色绑定表行（复合主键）。</summary>
+public sealed class MenuRoleRecord
+{
+    public long MenuId { get; set; }
+
+    public long RoleId { get; set; }
 }

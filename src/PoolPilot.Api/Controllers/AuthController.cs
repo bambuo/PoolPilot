@@ -30,7 +30,8 @@ public sealed class AuthController(
     LoginUseCase login,
     VerifyMfaLoginUseCase verifyMfaLogin,
     BindMfaOnLoginUseCase bindMfaOnLogin,
-    GetSessionUserUseCase getSessionUser) : ControllerBase
+    GetSessionUserUseCase getSessionUser,
+    GetPermissionsUseCase getPermissions) : ControllerBase
 {
     /// <summary>
     /// 发送注册验证码。
@@ -145,11 +146,22 @@ public sealed class AuthController(
             : Ok(session);
     }
 
+    /// <summary>
+    /// 当前用户的角色与逐权限点的动作。前端据此决定显示哪些菜单、藏起哪些按钮。
+    ///
+    /// **登录即可访问**：它就是用来回答"我能做什么"的。未登录时授权中间件会先回 401，
+    /// 所以这里不必再判一次。
+    /// </summary>
+    [HttpGet("permissions")]
+    public async Task<ActionResult<PermissionsDto>> Permissions(CancellationToken cancellationToken = default) =>
+        Ok(await getPermissions.ExecuteAsync(cancellationToken).ConfigureAwait(false));
+
     /// <summary>签发会话 Cookie。</summary>
     private Task SignInAsync(SessionDto session)
     {
         // 断言的是"这人现在是谁"——账号 Id 用 NameIdentifier，邮箱用 Name。
-        // 不放权限声明：本项目没有角色，一个账号看到的就是全部。
+        // **不放权限声明**：权限是动态的（改一次角色绑定就该立刻生效），塞进有 7 天有效期的
+        // Cookie 里会留下一条比事实更长寿的陈旧授权。判定一律现查 Casbin（见 RequirePermissionAttribute）。
         ClaimsIdentity identity = new(
             [
                 new Claim(ClaimTypes.NameIdentifier, session.UserId.ToString(CultureInfo.InvariantCulture)),

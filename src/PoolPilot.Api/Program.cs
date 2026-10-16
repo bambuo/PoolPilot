@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Api.Hubs;
 using PoolPilot.Api.Middleware;
 using PoolPilot.Application.Abstractions;
@@ -9,6 +10,7 @@ using PoolPilot.Domain.Constants;
 using PoolPilot.Domain.Repositories;
 using Lighter.Net.Interfaces.Clients;
 
+using PoolPilot.Infrastructure.Authorization;
 using PoolPilot.Infrastructure.Lighter;
 using PoolPilot.Infrastructure.Auth;
 using PoolPilot.Infrastructure.Brokers;
@@ -65,8 +67,14 @@ public sealed class Program
 
                 options.Events.OnRedirectToAccessDenied = context =>
                 {
+                    // 带上引导语：403 的绝大多数场景是"这个人还没被分配对应菜单权限"，
+                    // 而使用者看到一句"没有权限"通常不知道下一步该找谁。形状仍是 { error }。
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    return context.Response.WriteAsJsonAsync(new { error = "没有权限" });
+                    return context.Response.WriteAsJsonAsync(new
+                    {
+                        error = "没有权限执行该操作；如果这是你的工作所需，"
+                            + "请联系管理员在「用户管理」里为你分配对应的菜单权限",
+                    });
                 };
             });
 
@@ -114,6 +122,24 @@ public sealed class Program
         builder.Services.AddScoped<IFollowerLedgerRepository, FollowerLedgerRepository>();
         builder.Services.AddScoped<ILiveOrderRepository, LiveOrderRepository>();
         builder.Services.AddScoped<IUserRepository, UserRepository>();
+
+        // 授权的事实源（菜单 / 角色 / 两张绑定表）。它们是 Casbin 策略投影的输入，
+        // 不落单独的 casbin_rule 表（见 docs/PERMISSIONS.md）。
+        builder.Services.AddScoped<IMenuRepository, MenuRepository>();
+        builder.Services.AddScoped<IRoleRepository, RoleRepository>();
+        builder.Services.AddScoped<IUserRoleRepository, UserRoleRepository>();
+        builder.Services.AddScoped<IMenuRoleRepository, MenuRoleRepository>();
+
+        // ── 授权：Casbin（只出现在 Infrastructure）─────────────
+        // Enforcer 是单例（表达"全库此刻的授权状态"，每请求造一个是浪费且会看到不同快照）；
+        // 判定与写侧都走应用层的抽象，Controller 不认识 Casbin。
+        builder.Services.AddSingleton<CasbinEnforcer>();
+        builder.Services.AddScoped<IPolicyWriter, CasbinPolicyWriter>();
+        builder.Services.AddScoped<IPermissionEvaluator, CasbinPermissionEvaluator>();
+
+        // "当前是谁"的实现放在表现层（它认识 Cookie 声明），应用层只认 ICurrentUser
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // 通知：通道 / 样板 / 记录。口令与交易所凭据同一条约定（明文，见 EXCHANGES.md）
         builder.Services.AddScoped<INotificationProviderRepository, NotificationProviderRepository>();
@@ -178,6 +204,31 @@ public sealed class Program
         builder.Services.AddScoped<VerifyMfaLoginUseCase>();
         builder.Services.AddScoped<BindMfaOnLoginUseCase>();
         builder.Services.AddScoped<GetSessionUserUseCase>();
+
+        // ── 菜单与角色（「系统 → 菜单管理」）────────────────────
+        builder.Services.AddScoped<GetMenuTreeUseCase>();
+        builder.Services.AddScoped<GetAdminMenuTreeUseCase>();
+        builder.Services.AddScoped<CreateMenuUseCase>();
+        builder.Services.AddScoped<UpdateMenuUseCase>();
+        builder.Services.AddScoped<DeleteMenuUseCase>();
+        builder.Services.AddScoped<GetMenuRolesUseCase>();
+        builder.Services.AddScoped<SetMenuRolesUseCase>();
+        builder.Services.AddScoped<ListRolesUseCase>();
+        builder.Services.AddScoped<CreateRoleUseCase>();
+        builder.Services.AddScoped<GetPermissionsUseCase>();
+
+        // ── 用户管理与角色管理（「系统 → 用户管理 / 角色管理」）──
+        builder.Services.AddScoped<ListAdminUsersUseCase>();
+        builder.Services.AddScoped<SetUserRolesUseCase>();
+        builder.Services.AddScoped<ListAdminRolesUseCase>();
+        builder.Services.AddScoped<RenameRoleUseCase>();
+        builder.Services.AddScoped<DeleteRoleUseCase>();
+        builder.Services.AddScoped<GetRoleMenusUseCase>();
+        builder.Services.AddScoped<SetRoleMenusUseCase>();
+
+        // 启动播种：确保超级管理员角色存在、空库播种菜单、补齐老库缺的后加内置菜单、
+        // 库里唯一的账号绑上超管（防锁死）
+        builder.Services.AddScoped<SeedAuthorizationUseCase>();
 
         builder.Services.AddScoped<ListNotificationProvidersUseCase>();
         builder.Services.AddScoped<CreateNotificationProviderUseCase>();
@@ -251,6 +302,37 @@ public sealed class Program
             PoolPilotDbContext db = scope.ServiceProvider.GetRequiredService<PoolPilotDbContext>();
             ILogger<Program> startupLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
             DatabaseSchemaInitializer.EnsureSchemaAsync(db, startupLogger).GetAwaiter().GetResult();
+
+            // 授权播种必须在建表之后：它要写 roles / menus，并最后重建一次 Enforcer。
+            SeedAuthorizationUseCase seed = scope.ServiceProvider.GetRequiredService<SeedAuthorizationUseCase>();
+            AuthorizationSeedResult seeded = seed.ExecuteAsync().GetAwaiter().GetResult();
+
+            if (seeded.SuperadminRoleCreated)
+            {
+                startupLogger.LogWarning("已建立系统角色 superadmin（超级管理员）");
+            }
+
+            if (seeded.MenusSeeded > 0)
+            {
+                startupLogger.LogWarning("菜单表为空，已播种 {Count} 条内置菜单", seeded.MenusSeeded);
+            }
+
+            if (seeded.BackfilledMenuCodes.Count > 0)
+            {
+                // 老库（menus 非空、播种不跑）缺后加的内置菜单：只补这几条 code，存在即跳过。
+                // 刻意不做"内置菜单全量重播"——那会让用户主动删掉的内置菜单每次重启复活
+                startupLogger.LogWarning(
+                    "库里缺少后加的内置菜单 {Codes}，已补插",
+                    string.Join("/", seeded.BackfilledMenuCodes));
+            }
+
+            if (seeded.SuperadminBoundToSoleAccount)
+            {
+                // 防锁死：库里只剩一个账号却没有任何角色时，把它绑成超管，
+                // 否则那个账号连「菜单管理」都打不开，系统再也回不到可配置状态
+                startupLogger.LogWarning(
+                    "库里唯一的账号还没有任何角色，已自动绑定 superadmin（否则无人能进入菜单管理）");
+            }
         }
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -261,13 +343,17 @@ public sealed class Program
 
         if (app.Environment.IsDevelopment())
         {
-            app.MapOpenApi();
+            // 必须鉴权：这份文档列出了全部接口与它们的形状，匿名可读等于把整套接口清单送出去
+            app.MapOpenApi().RequireAuthorization();
         }
 
         // **一处收口**：控制器默认全部要登录，只有显式标了 AllowAnonymous 的端点例外
         // （目前只有 AuthController 与下面的健康检查）。这样以后新增的控制器是"默认受保护"，
         // 而不是"默认敞开、要靠人记得加属性"。
         app.MapControllers().RequireAuthorization();
+
+        // Hub 也先要登录；"连进来之后能不能收内容"另在 MonitorHub.OnConnectedAsync 里判
+        // （menu:graph 的 view，全量广播只能靠拒绝连接挡，见 docs/PERMISSIONS.md 第七节）
         app.MapHub<MonitorHub>("/hubs/monitor").RequireAuthorization();
 
         // 健康检查：供前端确认后端已就绪。它必须在**登录之前**可访问——
