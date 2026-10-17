@@ -189,7 +189,7 @@ onMounted(async () => {
           <div class="card-head">
             <RouterLink
               class="card-title"
-              :to="{ name: 'pool-detail', params: { accountIndex: String(lead.accountIndex) } }"
+              :to="{ name: 'lead-detail', params: { accountIndex: String(lead.accountIndex) } }"
             >
               {{ lead.name || poolNameOf(lead.accountIndex) }}
             </RouterLink>

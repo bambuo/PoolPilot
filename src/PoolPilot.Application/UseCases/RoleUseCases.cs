@@ -250,6 +250,7 @@ public sealed class SeedAuthorizationUseCase(
         new("pool-detail", "池详情", "/pools/:accountIndex", MenuKinds.Hidden, null, [MenuActions.View], "pools", 40),
         new("leads", "带单员", "/leads", MenuKinds.Menu, "IconScan",
             [MenuActions.View, MenuActions.Edit, MenuActions.Delete], null, 50),
+        new("lead-detail", "带单员详情", "/leads/:accountIndex", MenuKinds.Hidden, null, [MenuActions.View], "leads", 55),
         new("copy-list", "跟单", "/copy", MenuKinds.Menu, "IconUserGroup",
             [MenuActions.View, MenuActions.Edit, MenuActions.Delete], null, 60),
         // code 用 copy-* 前缀而不是 copy：它是前端路由名（addRoute 的 name），而全站跨页链接

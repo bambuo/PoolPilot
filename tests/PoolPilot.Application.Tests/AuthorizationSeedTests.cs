@@ -22,7 +22,7 @@ public sealed class AuthorizationSeedTests
         AuthorizationSeedResult result = await h.Seed.ExecuteAsync();
 
         Assert.AreEqual(h.Menus.Menus.Count, result.AddedMenuCodes.Count, "空库应当把内置菜单全部建出来");
-        Assert.IsGreaterThanOrEqualTo(15, result.AddedMenuCodes.Count);
+        Assert.IsGreaterThanOrEqualTo(16, result.AddedMenuCodes.Count);
 
         Menu users = h.Menus.Menus.Single(m => m.Code == "system-users");
         Menu roles = h.Menus.Menus.Single(m => m.Code == "system-roles");
@@ -68,7 +68,7 @@ public sealed class AuthorizationSeedTests
         AuthorizationSeedResult second = await h.Seed.ExecuteAsync();
 
         Assert.IsEmpty(second.AddedMenuCodes, "第二次启动必须无事可做（幂等）");
-        Assert.HasCount(15, h.Menus.Menus);
+        Assert.HasCount(16, h.Menus.Menus);
     }
 
     [TestMethod]

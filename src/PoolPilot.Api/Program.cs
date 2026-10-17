@@ -399,9 +399,13 @@ public sealed class Program
         app.UseMiddleware<ExceptionHandlingMiddleware>();
 
         // deb 包里 web/dist 会放在 wwwroot：生产环境由 Kestrel 直接托管前端。
-        // 静态资源与 API 的授权无关，放在认证之前；开发期 wwwroot 不存在时这两个中间件是空操作。
-        app.UseDefaultFiles();
-        app.UseStaticFiles();
+        // 静态资源与 API 的授权无关，放在认证之前；开发期没有 wwwroot 时不挂这两个中间件，
+        // 避免 Kestrel 每次启动都打一条 "WebRootPath was not found" 的警告。
+        if (app.Environment.WebRootPath is { } webRootPath && Directory.Exists(webRootPath))
+        {
+            app.UseDefaultFiles();
+            app.UseStaticFiles();
+        }
 
         // 限流排在认证之前：公开页的匿名流量根本不该先去解一遍 Cookie。
         // 顺序对正确性没有影响（拒绝由 OnRejected 自己写响应），只是少做无用功

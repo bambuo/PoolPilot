@@ -396,6 +396,10 @@ export const api = {
   /** 全部带单员：配置状态、此刻是否在收推送、订阅数与信号产量。 */
   leadTraders: () => getJson<LeadTrader[]>('/api/lead-traders'),
 
+  /** 单个带单员。工作台详情页用它先拿到观察状态，再单独取池详情。 */
+  leadTrader: (accountIndex: number | string) =>
+    getJson<LeadTrader>(`/api/lead-traders/${accountIndex}`),
+
   /** 创建或启停一个带单员。**创建即观察**——存在就在盯这个池。 */
   configureLeadTrader: (accountIndex: number | string, isEnabled: boolean) =>
     getJson<LeadTrader>(`/api/lead-traders/${accountIndex}`, {
