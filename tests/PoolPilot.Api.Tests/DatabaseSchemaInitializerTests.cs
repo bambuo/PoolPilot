@@ -216,6 +216,53 @@ public sealed class DatabaseSchemaInitializerTests
         }
     }
 
+    /// <summary>
+    /// roles 的注册默认标记：非空、有默认值（false），所以老库可以原地补上，
+    /// 不需要删库重建。补出来的值必须是 false——"老角色默认接管新注册"是个业务决定，
+    /// 不能由补列代码替人做。
+    /// </summary>
+    [TestMethod]
+    public void EnsureSchema_WhenRolesMissingRegistrationDefault_BackfillsFalse()
+    {
+        string path = Temp();
+
+        try
+        {
+            using (PoolPilotDbContext db = Open(path))
+            {
+                DatabaseSchemaInitializer.EnsureSchemaAsync(db, NullLogger.Instance).GetAwaiter().GetResult();
+
+                db.Roles.Add(new RoleRecord { Code = "member", Title = "普通成员", IsSystem = false });
+                db.SaveChangesAsync().GetAwaiter().GetResult();
+            }
+
+            Execute(path, "ALTER TABLE \"roles\" DROP COLUMN \"IsRegistrationDefault\"");
+
+            using (PoolPilotDbContext db = Open(path))
+            {
+                IReadOnlyList<string> created = DatabaseSchemaInitializer
+                    .EnsureSchemaAsync(db, NullLogger.Instance).GetAwaiter().GetResult();
+
+                CollectionAssert.Contains(
+                    created.ToList(),
+                    "roles.IsRegistrationDefault",
+                    "有默认值的非空列应当被原地补上");
+            }
+
+            using (PoolPilotDbContext db = Open(path))
+            {
+                RoleRecord stored = db.Roles.Single();
+
+                Assert.AreEqual("member", stored.Code);
+                Assert.IsFalse(stored.IsRegistrationDefault, "老角色不能被自动设成注册默认");
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [TestMethod]
     public void EnsureSchema_WhenMissingNotNullColumnWithoutDefault_WarnsAndDoesNotGuess()
     {

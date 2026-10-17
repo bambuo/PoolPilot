@@ -223,6 +223,16 @@ public sealed class RoleRepository(PoolPilotDbContext db) : IRoleRepository
         return row is null ? null : ToDomain(row);
     }
 
+    public async Task<Role?> FindRegistrationDefaultAsync(CancellationToken cancellationToken = default)
+    {
+        RoleRecord? row = await db.Roles
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.IsRegistrationDefault, cancellationToken)
+            .ConfigureAwait(false);
+
+        return row is null ? null : ToDomain(row);
+    }
+
     public async Task<Role> CreateAsync(Role role, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(role);
@@ -232,6 +242,7 @@ public sealed class RoleRepository(PoolPilotDbContext db) : IRoleRepository
             Code = role.Code,
             Title = role.Title,
             IsSystem = role.IsSystem,
+            IsRegistrationDefault = role.IsRegistrationDefault,
         };
 
         db.Roles.Add(row);
@@ -249,10 +260,36 @@ public sealed class RoleRepository(PoolPilotDbContext db) : IRoleRepository
             .ConfigureAwait(false)
             ?? throw new ArgumentException($"角色 {role.Id} 不存在，无法更新", nameof(role));
 
-        // 只回写 Title：Code 是身份（改它等于换掉全部绑定），IsSystem 由系统维护
+        // 只回写 Title：Code 是身份（改它等于换掉全部绑定），IsSystem 由系统维护，
+        // 注册默认标记走 SetRegistrationDefaultAsync（它要同时清掉别的角色）
         row.Title = role.Title;
 
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SetRegistrationDefaultAsync(string? code, CancellationToken cancellationToken = default)
+    {
+        if (code is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(code);
+
+            bool exists = await db.Roles
+                .AnyAsync(r => r.Code == code, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (!exists)
+            {
+                throw new ArgumentException($"角色「{code}」不存在，无法设为注册默认", nameof(code));
+            }
+        }
+
+        // 单条 UPDATE 完成"清掉旧的、设上新的"，库里不会出现两个默认角色；
+        // null 时所有行都命中 false，等于取消默认
+        await db.Roles
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(r => r.IsRegistrationDefault, r => code != null && r.Code == code),
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(string code, CancellationToken cancellationToken = default)
@@ -281,6 +318,7 @@ public sealed class RoleRepository(PoolPilotDbContext db) : IRoleRepository
         Code = row.Code,
         Title = row.Title,
         IsSystem = row.IsSystem,
+        IsRegistrationDefault = row.IsRegistrationDefault,
     };
 }
 

@@ -112,9 +112,18 @@ internal sealed class FakeRoleRepository : IRoleRepository
     public Task<Role?> FindByCodeAsync(string code, CancellationToken cancellationToken = default) =>
         Task.FromResult(_roles.FirstOrDefault(r => r.Code == code));
 
+    public Task<Role?> FindRegistrationDefaultAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(_roles.FirstOrDefault(r => r.IsRegistrationDefault));
+
     public Task<Role> CreateAsync(Role role, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(role);
+
+        // 与真实仓储同一条约束：默认角色全库最多一个
+        if (role.IsRegistrationDefault)
+        {
+            ClearDefault();
+        }
 
         Role stored = role with { Id = _nextId++ };
         _roles.Add(stored);
@@ -145,12 +154,48 @@ internal sealed class FakeRoleRepository : IRoleRepository
         return Task.CompletedTask;
     }
 
-    public Role Seed(string code, string title = "", bool isSystem = false)
+    public Task SetRegistrationDefaultAsync(string? code, CancellationToken cancellationToken = default)
     {
-        Role role = new() { Id = _nextId++, Code = code, Title = title, IsSystem = isSystem };
+        if (code is not null && !_roles.Any(r => r.Code == code))
+        {
+            throw new ArgumentException($"角色「{code}」不存在，无法设为注册默认", nameof(code));
+        }
+
+        for (int i = 0; i < _roles.Count; i++)
+        {
+            _roles[i] = _roles[i] with { IsRegistrationDefault = code is not null && _roles[i].Code == code };
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Role Seed(string code, string title = "", bool isSystem = false, bool isRegistrationDefault = false)
+    {
+        if (isRegistrationDefault)
+        {
+            ClearDefault();
+        }
+
+        Role role = new()
+        {
+            Id = _nextId++,
+            Code = code,
+            Title = title,
+            IsSystem = isSystem,
+            IsRegistrationDefault = isRegistrationDefault,
+        };
+
         _roles.Add(role);
 
         return role;
+    }
+
+    private void ClearDefault()
+    {
+        for (int i = 0; i < _roles.Count; i++)
+        {
+            _roles[i] = _roles[i] with { IsRegistrationDefault = false };
+        }
     }
 }
 

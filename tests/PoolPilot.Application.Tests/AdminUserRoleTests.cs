@@ -150,6 +150,80 @@ public sealed class AdminUserRoleTests
         AdminRoleDto editor = roles.Single(r => r.Code == "editor");
         Assert.AreEqual(2, editor.MemberCount, "成员数数的是人，不是绑定行");
         Assert.AreEqual(1, editor.MenuCount, "菜单数数的是绑定的菜单");
+        Assert.IsFalse(editor.IsRegistrationDefault, "没指定过默认角色，列表必须如实反映");
+    }
+
+    [TestMethod]
+    public async Task RegistrationDefault_SetMovesTheFlagAndRebuilds()
+    {
+        Harness h = new();
+        h.Roles.Seed("editor", "编辑");
+        h.Roles.Seed("viewer", "只读");
+
+        await h.RegistrationDefault.SetAsync("editor");
+
+        Assert.IsTrue(h.Roles.Roles.Single(r => r.Code == "editor").IsRegistrationDefault);
+        Assert.IsFalse(h.Roles.Roles.Single(r => r.Code == "viewer").IsRegistrationDefault);
+        Assert.AreEqual(1, h.Policies.RebuildCount);
+
+        // 换一个角色：旧的必须自动清掉，库里永远只有一个默认
+        await h.RegistrationDefault.SetAsync("viewer");
+
+        Assert.IsFalse(h.Roles.Roles.Single(r => r.Code == "editor").IsRegistrationDefault);
+        Assert.IsTrue(h.Roles.Roles.Single(r => r.Code == "viewer").IsRegistrationDefault);
+        Assert.AreEqual(2, h.Policies.RebuildCount);
+    }
+
+    [TestMethod]
+    public async Task RegistrationDefault_ForSystemRole_IsRejected()
+    {
+        Harness h = new();
+        h.Roles.Seed(PermissionSubjects.SuperadminRoleCode, "超级管理员", isSystem: true);
+
+        ArgumentException error = await Assert.ThrowsExactlyAsync<ArgumentException>(
+            () => h.RegistrationDefault.SetAsync(PermissionSubjects.SuperadminRoleCode));
+
+        StringAssert.Contains(error.Message, "系统角色");
+        Assert.IsFalse(h.Roles.Roles.Single().IsRegistrationDefault);
+        Assert.AreEqual(0, h.Policies.RebuildCount);
+    }
+
+    [TestMethod]
+    public async Task RegistrationDefault_ForMissingRole_Throws()
+    {
+        Harness h = new();
+
+        ArgumentException error = await Assert.ThrowsExactlyAsync<ArgumentException>(
+            () => h.RegistrationDefault.SetAsync("ghost"));
+
+        StringAssert.Contains(error.Message, "ghost");
+        Assert.AreEqual(0, h.Policies.RebuildCount);
+    }
+
+    [TestMethod]
+    public async Task RegistrationDefault_ClearRemovesTheFlagAndRebuilds()
+    {
+        Harness h = new();
+        h.Roles.Seed("editor", "编辑", isRegistrationDefault: true);
+
+        await h.RegistrationDefault.ClearAsync("editor");
+
+        Assert.IsFalse(h.Roles.Roles.Single().IsRegistrationDefault);
+        Assert.AreEqual(1, h.Policies.RebuildCount);
+    }
+
+    [TestMethod]
+    public async Task DeleteRole_ForRegistrationDefault_IsRejected()
+    {
+        Harness h = new();
+        h.Roles.Seed("editor", "编辑", isRegistrationDefault: true);
+
+        ArgumentException error = await Assert.ThrowsExactlyAsync<ArgumentException>(
+            () => h.DeleteRole.ExecuteAsync("editor"));
+
+        StringAssert.Contains(error.Message, "注册默认");
+        Assert.HasCount(1, h.Roles.Roles, "拒绝删除时不该动任何数据");
+        Assert.AreEqual(0, h.Policies.RebuildCount);
     }
 
     [TestMethod]
@@ -368,6 +442,8 @@ public sealed class AdminUserRoleTests
 
         public DeleteRoleUseCase DeleteRole { get; }
 
+        public RegistrationDefaultRoleUseCase RegistrationDefault { get; }
+
         public GetRoleMenusUseCase GetRoleMenus { get; }
 
         public SetRoleMenusUseCase SetRoleMenus { get; }
@@ -379,6 +455,7 @@ public sealed class AdminUserRoleTests
             ListRoles = new ListAdminRolesUseCase(Roles, UserRoles, MenuRoles, Menus);
             RenameRole = new RenameRoleUseCase(Roles, Policies);
             DeleteRole = new DeleteRoleUseCase(Roles, UserRoles, Policies);
+            RegistrationDefault = new RegistrationDefaultRoleUseCase(Roles, Policies);
             GetRoleMenus = new GetRoleMenusUseCase(Roles, Menus, MenuRoles);
             SetRoleMenus = new SetRoleMenusUseCase(Roles, Menus, MenuRoles, Policies);
         }

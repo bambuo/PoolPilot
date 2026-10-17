@@ -35,7 +35,7 @@ public sealed class RegistrationTests
                 h.Mailer,
                 h.Logs,
                 h.Clock),
-            new RegisterUserUseCase(h.Users, h.UserRoles, h.Codes, h.Policies),
+            new RegisterUserUseCase(h.Users, h.Roles, h.UserRoles, h.Codes, h.Policies),
             h);
     }
 
@@ -62,7 +62,7 @@ public sealed class RegistrationTests
         Assert.AreEqual(1, h.Policies.RebuildCount, "绑定了超管就必须重建一次策略，否则第一个账号当场用不了");
     }
 
-    /// <summary>第二个账号默认**没有任何角色**：注册保持开放，但开放不等于送权限。</summary>
+    /// <summary>第二个账号默认**没有任何角色**（没指定注册默认角色时）：开放注册不等于送权限。</summary>
     [TestMethod]
     public async Task Register_SecondAccount_GetsNoRole()
     {
@@ -91,6 +91,55 @@ public sealed class RegistrationTests
         UserRoleBinding binding = Assert.ContainsSingle(h.UserRoles.Bindings);
         Assert.AreEqual(Email, h.Users.Users.Single(u => u.Id == binding.UserId).Email.Value,
             "只有第一个账号该被绑成超管");
+    }
+
+    /// <summary>角色管理里指定了注册默认角色后，第二个及之后的账号自动获得它。</summary>
+    [TestMethod]
+    public async Task Register_SecondAccount_WithRegistrationDefault_GetsThatRole()
+    {
+        (RequestRegistrationCodeUseCase request, RegisterUserUseCase register, Harness h) = Build();
+        h.Users.Seed("first@example.com", Password);
+        h.Roles.Seed("member", "普通成员", isRegistrationDefault: true);
+
+        await request.ExecuteAsync(Email);
+        await register.ExecuteAsync(new RegisterRequestDto
+        {
+            Email = Email,
+            Code = h.Codes.Peek(EmailAddress.Parse(Email))!,
+            Password = Password,
+            ConfirmPassword = Password,
+        });
+
+        User created = h.Users.Users.Single(u => u.Email.Value == Email);
+        UserRoleBinding binding = Assert.ContainsSingle(h.UserRoles.Bindings);
+
+        Assert.AreEqual(created.Id, binding.UserId);
+        Assert.AreEqual("member", binding.RoleCode, "新账号应当自动拿到注册默认角色");
+        Assert.AreEqual(1, h.Policies.RebuildCount, "默认角色绑定后必须立刻重建策略");
+    }
+
+    /// <summary>第一个账号仍只绑 superadmin：默认角色不能改变"首个账号是管理员"这条规则。</summary>
+    [TestMethod]
+    public async Task Register_FirstAccount_WithRegistrationDefault_StillOnlyGetsSuperadmin()
+    {
+        (RequestRegistrationCodeUseCase request, RegisterUserUseCase register, Harness h) = Build();
+        h.Roles.Seed("member", "普通成员", isRegistrationDefault: true);
+
+        await request.ExecuteAsync(Email);
+        await register.ExecuteAsync(new RegisterRequestDto
+        {
+            Email = Email,
+            Code = h.Codes.Peek(EmailAddress.Parse(Email))!,
+            Password = Password,
+            ConfirmPassword = Password,
+        });
+
+        UserRoleBinding binding = Assert.ContainsSingle(h.UserRoles.Bindings);
+        Assert.AreEqual(
+            PermissionSubjects.SuperadminRoleCode,
+            binding.RoleCode,
+            "首个账号已经是超管，不该同时绑定默认角色");
+        Assert.AreEqual(1, h.Policies.RebuildCount);
     }
 
     [TestMethod]
@@ -324,6 +373,8 @@ public sealed class RegistrationTests
         public FakeClock Clock { get; } = new(new DateTimeOffset(2026, 10, 14, 8, 0, 0, TimeSpan.Zero));
 
         public FakeUserRepository Users { get; } = new();
+
+        public FakeRoleRepository Roles { get; } = new();
 
         public FakeUserRoleRepository UserRoles { get; } = new();
 

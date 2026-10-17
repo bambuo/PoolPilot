@@ -186,7 +186,7 @@ onMounted(async () => {
     <a-card :bordered="false">
       <template #title>
         <a-space :size="10" wrap>
-          <RouterLink :to="{ name: 'leads' }" class="back-link">← 全部带单员</RouterLink>
+          <RouterLink :to="{ name: 'leads' }" class="back-link">← 带单管理</RouterLink>
           <span class="divider">|</span>
           <span>{{ lead?.name || `带单员 #${accountIndex}` }}</span>
           <a-tooltip v-if="lead" :content="statusHint">
@@ -210,7 +210,7 @@ onMounted(async () => {
             size="small"
             :loading="actionLoading"
             :disabled="!canEdit"
-            :title="canEdit ? '' : '需要「带单员」的管理权限（编辑）'"
+            :title="canEdit ? '' : '需要「带单管理」的管理权限（编辑）'"
             @click="setEnabled(!lead.isEnabled)"
           >
             {{ lead.isEnabled ? '暂停观察' : '恢复观察' }}
@@ -225,7 +225,7 @@ onMounted(async () => {
               status="danger"
               :loading="actionLoading"
               :disabled="!canDelete"
-              :title="canDelete ? '' : '需要「带单员」的管理权限（删除）'"
+              :title="canDelete ? '' : '需要「带单管理」的管理权限（删除）'"
             >
               停止观察
             </a-button>

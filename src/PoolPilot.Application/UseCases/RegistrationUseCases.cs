@@ -100,6 +100,7 @@ public sealed class RequestRegistrationCodeUseCase(
 /// </summary>
 public sealed class RegisterUserUseCase(
     IUserRepository users,
+    IRoleRepository roles,
     IUserRoleRepository userRoles,
     IRegistrationCodeStore codes,
     IPolicyWriter policies)
@@ -145,15 +146,37 @@ public sealed class RegisterUserUseCase(
             cancellationToken).ConfigureAwait(false);
 
         // 首个账号自动成为超级管理员（判据与启动播种共用 SuperadminBootstrap，只有一处）。
-        // 之后的账号默认无角色——注册保持开放，但也因此不能顺带拿到任何权限。
+        // 之后的账号绑定「角色管理」里指定的**注册默认角色**；没指定时维持无角色——
+        // 注册保持开放，但开放不等于送权限。
         bool bound = await SuperadminBootstrap
             .BindNewAccountAsync(created.Id, users, userRoles, cancellationToken)
             .ConfigureAwait(false);
 
+        bool defaultBound = false;
+
+        if (!bound)
+        {
+            Role? registrationDefault = await roles
+                .FindRegistrationDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            // 系统角色被明确排除在默认角色之外（见设置用例）；这里再挡一次，
+            // 防止手工改库把 superadmin 写成默认后，每个新账号都直接变成管理员
+            if (registrationDefault is not null && !registrationDefault.IsSystem)
+            {
+                await userRoles
+                    .AddAsync(created.Id, registrationDefault.Code, cancellationToken)
+                    .ConfigureAwait(false);
+
+                defaultBound = true;
+            }
+        }
+
         // 绑定确实发生时才重建：那是唯一一次"注册动了授权事实源"的时刻。
         // 少了它，第一个账号要等到下一次写操作才真正拿到超管权限——在界面上表现为
         // "刚注册完、什么都没改，却进不去菜单管理"，且刷新也不会好。
-        if (bound)
+        // 默认角色同样要立刻进入策略，否则新账号登录后看得到角色名、却没有任何权限。
+        if (bound || defaultBound)
         {
             await policies.RebuildAsync(cancellationToken).ConfigureAwait(false);
         }

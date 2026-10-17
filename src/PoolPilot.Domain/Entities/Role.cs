@@ -6,6 +6,9 @@ namespace PoolPilot.Domain.Entities;
 ///
 /// <see cref="IsSystem"/> 为 <c>true</c> 的角色由系统维护（目前只有超级管理员）：
 /// 它不可被删除，其策略由投影自动补齐。
+///
+/// <see cref="IsRegistrationDefault"/> 标记"新注册账号自动获得的角色"。全库最多一个；
+/// 由「角色管理」显式指定，不会因为建角色而自动产生。它不改变已有账号的绑定。
 /// </summary>
 public sealed record Role
 {
@@ -17,4 +20,7 @@ public sealed record Role
 
     /// <summary>系统角色（由种子建立、不可删）。普通角色为 <c>false</c>。</summary>
     public required bool IsSystem { get; init; }
+
+    /// <summary>新账号注册时是否自动绑定这个角色。未指定默认角色时全库都是 <c>false</c>。</summary>
+    public bool IsRegistrationDefault { get; init; }
 }

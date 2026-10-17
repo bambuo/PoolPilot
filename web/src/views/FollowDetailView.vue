@@ -1060,7 +1060,7 @@ watch(followerId, () => {
       <template #title>
         <a-space :size="12">
           <!-- 返回入口。用 RouterLink 而非按钮：这是导航，应该能新标签页打开、能被键盘聚焦 -->
-          <RouterLink :to="{ name: 'copy-list' }" class="back-link">← 全部跟单</RouterLink>
+          <RouterLink :to="{ name: 'copy-list' }" class="back-link">← 跟单管理</RouterLink>
           <span style="color: var(--color-text-3); font-weight: 400">|</span>
           <span>跟单员 #{{ followerId }}</span>
           <template v-if="follower">
@@ -1114,7 +1114,7 @@ watch(followerId, () => {
           <a-button
             type="primary"
             :disabled="!canEdit"
-            :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+            :title="canEdit ? '' : '需要「跟单管理」的管理权限（编辑）'"
             :loading="saving"
             @click="requestConfigure(true)"
           >
@@ -1124,7 +1124,7 @@ watch(followerId, () => {
           <a-button
             v-if="follower.isActive"
             :disabled="!canEdit"
-            :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+            :title="canEdit ? '' : '需要「跟单管理」的管理权限（编辑）'"
             :loading="saving"
             @click="requestConfigure(false)"
           >
@@ -1133,7 +1133,7 @@ watch(followerId, () => {
           <a-button
             v-else
             :disabled="!canEdit"
-            :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+            :title="canEdit ? '' : '需要「跟单管理」的管理权限（编辑）'"
             :loading="saving"
             @click="requestConfigure(true)"
           >
@@ -1145,7 +1145,7 @@ watch(followerId, () => {
           <a-link
             status="danger"
             :disabled="!canDelete"
-            :title="canDelete ? '' : '需要「跟单」的管理权限（删除）'"
+            :title="canDelete ? '' : '需要「跟单管理」的管理权限（删除）'"
             @click="deleteOpen = true"
           >
             删除跟单员
@@ -1167,7 +1167,7 @@ watch(followerId, () => {
         >
           带单员暂停后不再产生新信号，这个跟单员因此不会再有新动作。
           已有仓位保持不动——是否平仓是交易决策，需要你自己决定。
-          到「带单员」页可以恢复它的观察。
+          到「带单管理」页可以恢复它的观察。
         </a-alert>
 
         <div style="margin-top: 10px; font-size: 12px; color: var(--color-text-3); line-height: 1.7">
@@ -1270,7 +1270,7 @@ watch(followerId, () => {
               size="mini"
               status="danger"
               :disabled="!canEdit"
-              :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+              :title="canEdit ? '' : '需要「跟单管理」的管理权限（编辑）'"
               @click="openClose(row.live)"
             >
               平仓
@@ -1413,7 +1413,7 @@ watch(followerId, () => {
           </div>
           <div style="font-size: 13px; color: var(--color-text-3); line-height: 1.8">
             它订阅的带单员<b>不受影响</b>：池子仍然被持续观察，信号照旧记录。
-            想连观察一起停掉，请到「带单员」页操作。
+            想连观察一起停掉，请到「带单管理」页操作。
           </div>
         </a-space>
         <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px">

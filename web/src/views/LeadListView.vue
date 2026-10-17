@@ -11,7 +11,7 @@ import { filterPoolOption, poolOptionLabel } from '@/utils/poolOptions'
 ///
 /// 一屏列出所有带单员，每张卡片只放**决定"这个观察值不值得留"的几个数**：
 /// 观察状态（在不在盯）、累计信号与最近信号（盯出了多少动静）、跟单员数（有谁在跟）。
-/// 布局与「跟单」页一致，信息分层也一样：状态 → 关键数 → 归属 → 操作。
+/// 布局与「跟单管理」页一致，信息分层也一样：状态 → 关键数 → 归属 → 操作。
 ///
 /// 关键设计：**带单员与跟单员是两件事**。带单员只要存在就在观察，
 /// 有没有人跟它无关；所以"无人跟随"不是故障，卡片只是如实说出来。
@@ -156,7 +156,7 @@ onMounted(async () => {
     <a-card :bordered="false">
       <template #title>
         <a-space>
-          <span>带单员</span>
+          <span>带单管理</span>
           <a-tag v-if="!loading" size="small">{{ leads.length }} 个</a-tag>
         </a-space>
       </template>
@@ -236,7 +236,7 @@ onMounted(async () => {
               <a-link
                 v-if="lead.isEnabled"
                 :disabled="!canEdit"
-                :title="canEdit ? '' : '需要「带单员」的管理权限（编辑）'"
+                :title="canEdit ? '' : '需要「带单管理」的管理权限（编辑）'"
                 @click="setEnabled(lead, false)"
               >
                 暂停
@@ -244,7 +244,7 @@ onMounted(async () => {
               <a-link
                 v-else
                 :disabled="!canEdit"
-                :title="canEdit ? '' : '需要「带单员」的管理权限（编辑）'"
+                :title="canEdit ? '' : '需要「带单管理」的管理权限（编辑）'"
                 @click="setEnabled(lead, true)"
               >
                 恢复
@@ -252,7 +252,7 @@ onMounted(async () => {
               <a-link
                 status="danger"
                 :disabled="!canDelete"
-                :title="canDelete ? '' : '需要「带单员」的管理权限（删除）'"
+                :title="canDelete ? '' : '需要「带单管理」的管理权限（删除）'"
                 @click="stop(lead)"
               >
                 停止
@@ -270,7 +270,7 @@ onMounted(async () => {
           type="button"
           class="lead-card add-card"
           :disabled="!canEdit"
-          :title="canEdit ? '' : '需要「带单员」的管理权限（编辑）'"
+          :title="canEdit ? '' : '需要「带单管理」的管理权限（编辑）'"
           @click="openCreate"
         >
           <span style="font-size: 26px; line-height: 1">+</span>

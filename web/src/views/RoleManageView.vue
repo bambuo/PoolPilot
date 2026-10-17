@@ -45,6 +45,14 @@ const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
 /// "数据没读出来"看起来是一样的，必须说清是前者。
 const customRoleCount = computed(() => roles.value.filter((role) => !role.isSystem).length)
 
+/// 当前注册默认角色。全库最多一个；没有指定时，新注册账号仍是"无角色"。
+const registrationDefault = computed(
+  () => roles.value.find((role) => role.isRegistrationDefault) ?? null,
+)
+
+/// 正在切换默认标记的角色 code（防重复点击，不改整页 loading）。
+const defaultSaving = ref<string | null>(null)
+
 // ── 列表 ────────────────────────────────────────────────
 
 async function load(): Promise<void> {
@@ -66,6 +74,41 @@ async function load(): Promise<void> {
 async function afterMutate(message: string): Promise<void> {
   Message.success(message)
   await Promise.all([load(), refreshNav()])
+}
+
+// ── 注册默认 ──────────────────────────────────────────────
+
+/// 系统角色不可设为默认（尤其 superadmin：那等于让每个注册者直接拿到全部权限）。
+/// 与"没有编辑权限"是两种原因，提示语分开说。
+function defaultEntryReason(role: AdminRoleSummary): string {
+  if (role.isSystem) return '系统角色不能设为注册默认'
+  if (!canEdit.value) return '没有编辑权限'
+
+  return ''
+}
+
+function defaultEntryDisabled(role: AdminRoleSummary): boolean {
+  return !canEdit.value || role.isSystem || defaultSaving.value !== null
+}
+
+async function toggleRegistrationDefault(role: AdminRoleSummary): Promise<void> {
+  if (defaultEntryDisabled(role)) return
+
+  defaultSaving.value = role.code
+
+  try {
+    if (role.isRegistrationDefault) {
+      await adminRoleApi.clearRegistrationDefault(role.code)
+      await afterMutate('已取消注册默认角色')
+    } else {
+      await adminRoleApi.setRegistrationDefault(role.code)
+      await afterMutate(`之后注册的账号将自动获得「${role.title}」`)
+    }
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    defaultSaving.value = null
+  }
 }
 
 // ── 新建 ────────────────────────────────────────────────
@@ -320,11 +363,20 @@ onMounted(async () => {
       <div class="hint-line">
         角色是权限的容器：其成员通过它拿到菜单上的动作（一个账号可有多个角色，权限取并集）。
         superadmin 恒有全部权限（由策略投影常驻补齐），改不了也删不掉，这里也不给它配菜单。
+        <b>注册默认</b>是之后注册的账号自动获得的角色，全库最多一个；没有指定时，新账号不会带任何权限。
         「菜单数」是这个角色被授权到的菜单节点数——改完授权，相关成员<b>下一次请求即生效</b>，
         不需要重新登录。
       </div>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" style="margin-bottom: 12px" />
+
+      <div
+        v-if="!loading && !errorMessage && roles.length > 0 && registrationDefault === null"
+        class="default-note"
+      >
+        当前没有设置注册默认角色：新注册的账号不会自动获得任何角色，
+        需要在「用户管理」里逐个分配，或在这里指定一个默认角色。
+      </div>
 
       <div v-if="!canEdit && !canDelete" class="readonly-line">
         当前账号对本页只有查看权限。
@@ -336,7 +388,7 @@ onMounted(async () => {
         row-key="code"
         :bordered="false"
         size="small"
-        :scroll="{ x: 870 }"
+        :scroll="{ x: 1050 }"
       >
         <template #columns>
           <a-table-column title="编码" :width="160">
@@ -359,6 +411,15 @@ onMounted(async () => {
             </template>
           </a-table-column>
 
+          <a-table-column title="注册默认" :width="100" align="center">
+            <template #cell="{ record }">
+              <a-tag v-if="(record as AdminRoleSummary).isRegistrationDefault" size="small" color="green">
+                默认
+              </a-tag>
+              <span v-else class="muted">—</span>
+            </template>
+          </a-table-column>
+
           <a-table-column title="成员数" :width="90" align="right">
             <template #cell="{ record }">{{ (record as AdminRoleSummary).memberCount }}</template>
           </a-table-column>
@@ -367,7 +428,7 @@ onMounted(async () => {
             <template #cell="{ record }">{{ (record as AdminRoleSummary).menuCount }}</template>
           </a-table-column>
 
-          <a-table-column title="操作" :width="240" fixed="right" align="center">
+          <a-table-column title="操作" :width="320" fixed="right" align="center">
             <template #cell="{ record }">
               <a-space :size="12">
                 <a-link
@@ -383,6 +444,13 @@ onMounted(async () => {
                   @click="openMenus(record as AdminRoleSummary)"
                 >
                   配置菜单
+                </a-link>
+                <a-link
+                  :disabled="defaultEntryDisabled(record as AdminRoleSummary)"
+                  :title="defaultEntryReason(record as AdminRoleSummary)"
+                  @click="toggleRegistrationDefault(record as AdminRoleSummary)"
+                >
+                  {{ (record as AdminRoleSummary).isRegistrationDefault ? '取消默认' : '设为默认' }}
                 </a-link>
                 <a-link
                   status="danger"
@@ -567,6 +635,14 @@ onMounted(async () => {
   margin-bottom: 12px;
   font-size: 12px;
   color: rgb(var(--warning-6));
+}
+
+/* 没设注册默认是"开放注册 + 新账号无权限"，不是错误，但必须说出来 */
+.default-note {
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--color-text-3);
 }
 
 /* 「只有系统角色」的说明挂在表格下面：它是一句注脚，不是页级提示 */

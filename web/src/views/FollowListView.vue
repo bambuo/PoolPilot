@@ -16,7 +16,7 @@ import { formatPercent, formatNumber, formatUsd } from '@/utils/format'
 /// 权益与收益率（赚没赚）、持仓（在赌什么）、成交/跳过（跟得紧不紧）。
 /// 流水与权益曲线属于细节，点进卡片再看。
 ///
-/// 与「带单员」页的分工：那边是**被观察的池**，这里是**下场的账户**。
+/// 与「带单管理」页的分工：那边是**被观察的池**，这里是**下场的账户**。
 /// 一个池可以挂多个跟单员（各自一份本金、各记一套账），所以卡片的身份是跟单员编号，
 /// 池名只是它订阅的对象。
 
@@ -235,7 +235,7 @@ async function load(silent = false): Promise<void> {
 
 /// 带单员名单：跟单员订阅的对象。
 ///
-/// 跟单不再从"池"出发：要跟的池必须先有带单员（在「带单员」页创建）。
+/// 跟单不再从"池"出发：要跟的池必须先有带单员（在「带单管理」页创建）。
 /// 这样订阅关系是明确挑出来的，而不是"顺手替你建一个观察者"造出来的——
 /// 后者会让界面上冒出一个你没创建过的带单员，也说不清你到底在跟谁。
 async function loadLeads(): Promise<void> {
@@ -309,7 +309,7 @@ onMounted(async () => {
     <a-card :bordered="false">
       <template #title>
         <a-space>
-          <span>跟单</span>
+          <span>跟单管理</span>
           <a-tag v-if="!loading" size="small">{{ followers.length }} 个</a-tag>
         </a-space>
       </template>
@@ -520,7 +520,7 @@ onMounted(async () => {
           type="button"
           class="account-card add-card"
           :disabled="!canEdit"
-          :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+          :title="canEdit ? '' : '需要「跟单管理」的管理权限（编辑）'"
           @click="openCreate()"
         >
           <span style="font-size: 26px; line-height: 1">+</span>
@@ -569,7 +569,7 @@ onMounted(async () => {
           <!-- 一个带单员都没有时，这里不能只是一句"暂无数据"——要说清下一步去哪做 -->
           <div v-if="!leadListError && leads.length === 0" style="font-size: 12px; color: var(--color-text-3); margin-top: 6px">
             还没有任何带单员。跟单员订阅的是带单员，所以先到
-            <RouterLink :to="{ name: 'leads' }" style="color: rgb(var(--primary-6))">「带单员」页</RouterLink>
+            <RouterLink :to="{ name: 'leads' }" style="color: rgb(var(--primary-6))">「带单管理」页</RouterLink>
             为你想跟的池创建观察者。
           </div>
         </div>

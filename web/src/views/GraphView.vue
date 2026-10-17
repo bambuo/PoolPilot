@@ -460,7 +460,7 @@ const modeLabel = (mode: string): string => copyModeLabel(mode)
 
         <!-- 整页全空时给一条最短的上手路径，而不是三行"暂无" -->
         <div v-if="!loading && leads.length === 0" class="onboarding">
-          想让它跑起来：先到「带单员」页挑一个池开始观察（哪怕没人跟也值得先看起来），
+          想让它跑起来：先到「带单管理」页挑一个池开始观察（哪怕没人跟也值得先看起来），
           再用一笔本金订阅它。
           <RouterLink :to="{ name: 'leads' }" class="layer-action">现在去创建带单员 →</RouterLink>
         </div>

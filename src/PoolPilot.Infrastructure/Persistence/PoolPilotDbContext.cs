@@ -232,6 +232,10 @@ public sealed class PoolPilotDbContext(DbContextOptions<PoolPilotDbContext> opti
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
             entity.HasIndex(e => e.Code).IsUnique();
+
+            // 非空且要给老库补列，必须有默认值；"最多一个"由仓储的一次写操作保证，
+            // 不建唯一索引（补列发生在建索引之后，索引会先因缺列而失败）
+            entity.Property(e => e.IsRegistrationDefault).HasDefaultValue(false);
         });
 
         // 用户-角色：复合主键，重复绑定在结构上被杜绝
@@ -1319,6 +1323,9 @@ public sealed class RoleRecord
     public string Title { get; set; } = string.Empty;
 
     public bool IsSystem { get; set; }
+
+    /// <summary>新注册账号是否自动绑定这个角色。全库最多一个。</summary>
+    public bool IsRegistrationDefault { get; set; }
 }
 
 /// <summary>用户-角色绑定表行（复合主键）。</summary>

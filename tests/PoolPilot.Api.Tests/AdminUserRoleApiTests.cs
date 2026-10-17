@@ -24,6 +24,8 @@ public sealed class AdminUserRoleApiTests
     private const string MemberEmail = "member@example.com";
     private const string EditorEmail = "editor@example.com";
     private const string SecondEmail = "second@example.com";
+    private const string NewcomerEmail = "newcomer@example.com";
+    private const string AnotherEmail = "another@example.com";
     private const string Password = "correct horse";
 
     [TestMethod]
@@ -302,6 +304,67 @@ public sealed class AdminUserRoleApiTests
         Assert.IsTrue(superadminMenus.MenuCodes.Contains("system-users"));
         Assert.IsTrue(superadminMenus.MenuCodes.Contains("system-roles"));
     }
+
+    [TestMethod]
+    public async Task RegistrationDefault_AppliesToNewAccounts_AndCanBeCleared()
+    {
+        using AuthTestApp app = new();
+        using HttpClient owner = await SignInAsync(app, OwnerEmail);
+
+        await CreateRoleAsync(owner, "member", "普通成员");
+
+        HttpResponseMessage set = await owner.PutAsync(
+            new Uri("/api/admin/roles/member/registration-default", UriKind.Relative),
+            content: null);
+        Assert.AreEqual(HttpStatusCode.NoContent, set.StatusCode);
+
+        List<AdminRoleDto> roles = (await owner.GetFromJsonAsync<List<AdminRoleDto>>(
+            new Uri("/api/admin/roles", UriKind.Relative)))!;
+        Assert.IsTrue(roles.Single(r => r.Code == "member").IsRegistrationDefault);
+
+        // 设置之后注册的账号自动拿到该角色（不需要再登录一次）
+        using (HttpClient newcomer = app.CreateClient())
+        {
+            await AuthApiTests.RegisterAsync(newcomer, NewcomerEmail, Password, app);
+        }
+
+        AdminUserDto first = (await GetUsersAsync(owner)).Single(u => u.Email == NewcomerEmail);
+        Assert.AreEqual("member", Assert.ContainsSingle(first.Roles).Code);
+
+        // 取消默认之后，再注册的账号恢复"无角色"，已有账号的绑定不受影响
+        HttpResponseMessage clear = await owner.DeleteAsync(
+            new Uri("/api/admin/roles/member/registration-default", UriKind.Relative));
+        Assert.AreEqual(HttpStatusCode.NoContent, clear.StatusCode);
+
+        using (HttpClient another = app.CreateClient())
+        {
+            await AuthApiTests.RegisterAsync(another, AnotherEmail, Password, app);
+        }
+
+        List<AdminUserDto> users = await GetUsersAsync(owner);
+        Assert.IsEmpty(users.Single(u => u.Email == AnotherEmail).Roles);
+        Assert.AreEqual("member", Assert.ContainsSingle(users.Single(u => u.Email == NewcomerEmail).Roles).Code);
+    }
+
+    [TestMethod]
+    public async Task RegistrationDefault_ForSuperadmin_IsRejected()
+    {
+        using AuthTestApp app = new();
+        using HttpClient owner = await SignInAsync(app, OwnerEmail);
+
+        HttpResponseMessage response = await owner.PutAsync(
+            new Uri(
+                $"/api/admin/roles/{PermissionSubjects.SuperadminRoleCode}/registration-default",
+                UriKind.Relative),
+            content: null);
+
+        Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+        StringAssert.Contains(await response.Content.ReadAsStringAsync(), "系统角色");
+    }
+
+    private static async Task<List<AdminUserDto>> GetUsersAsync(HttpClient owner) =>
+        (await owner.GetFromJsonAsync<List<AdminUserDto>>(
+            new Uri("/api/admin/users", UriKind.Relative)))!;
 
     private static async Task CreateRoleAsync(HttpClient owner, string code, string title)
     {

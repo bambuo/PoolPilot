@@ -285,6 +285,7 @@ public sealed class Program
         builder.Services.AddScoped<ListAdminRolesUseCase>();
         builder.Services.AddScoped<RenameRoleUseCase>();
         builder.Services.AddScoped<DeleteRoleUseCase>();
+        builder.Services.AddScoped<RegistrationDefaultRoleUseCase>();
         builder.Services.AddScoped<GetRoleMenusUseCase>();
         builder.Services.AddScoped<SetRoleMenusUseCase>();
 

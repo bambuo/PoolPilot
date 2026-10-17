@@ -42,6 +42,7 @@ public sealed class ListAdminRolesUseCase(
                 Code = role.Code,
                 Title = role.Title,
                 IsSystem = role.IsSystem,
+                IsRegistrationDefault = role.IsRegistrationDefault,
                 MemberCount = memberCounts.GetValueOrDefault(role.Code),
                 MenuCount = role.Code == PermissionSubjects.SuperadminRoleCode
                     ? totalMenus
@@ -79,8 +80,54 @@ public sealed class RenameRoleUseCase(IRoleRepository roles, IPolicyWriter polic
 }
 
 /// <summary>
-/// 删除角色。两条守卫：系统角色不可删；还有成员的先解绑用户——删掉角色会让那些账号
-/// 悄悄失去权限，而这件事没有任何界面会提醒。
+/// 指定 / 取消「注册默认角色」：新注册账号自动获得的角色。
+///
+/// **只影响之后注册的账号**，不改已有绑定。系统角色不可被设为默认——
+/// 尤其 superadmin：那等于让每个能收到注册码的人都直接拿到全部权限。
+/// 全库最多一个默认角色，由仓储的一次写操作保证。
+/// </summary>
+public sealed class RegistrationDefaultRoleUseCase(IRoleRepository roles, IPolicyWriter policies)
+{
+    public async Task SetAsync(string code, CancellationToken cancellationToken = default)
+    {
+        Role role = await FindAsync(code, cancellationToken).ConfigureAwait(false);
+
+        if (role.IsSystem)
+        {
+            throw new ArgumentException($"角色「{code}」是系统角色，不能设为注册默认", nameof(code));
+        }
+
+        // 已经是默认角色：幂等返回，不产生一次"什么都没变"的策略重建
+        if (role.IsRegistrationDefault)
+        {
+            return;
+        }
+
+        await roles.SetRegistrationDefaultAsync(role.Code, cancellationToken).ConfigureAwait(false);
+        await policies.RebuildAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task ClearAsync(string code, CancellationToken cancellationToken = default)
+    {
+        Role role = await FindAsync(code, cancellationToken).ConfigureAwait(false);
+
+        if (!role.IsRegistrationDefault)
+        {
+            return;
+        }
+
+        await roles.SetRegistrationDefaultAsync(null, cancellationToken).ConfigureAwait(false);
+        await policies.RebuildAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<Role> FindAsync(string code, CancellationToken cancellationToken) =>
+        await roles.FindByCodeAsync(code, cancellationToken).ConfigureAwait(false)
+            ?? throw new ArgumentException($"角色「{code}」不存在", nameof(code));
+}
+
+/// <summary>
+/// 删除角色。三条守卫：系统角色不可删；注册默认角色要先取消默认；
+/// 还有成员的先解绑用户——删掉角色会让那些账号悄悄失去权限，而这件事没有任何界面会提醒。
 /// </summary>
 public sealed class DeleteRoleUseCase(
     IRoleRepository roles,
@@ -95,6 +142,13 @@ public sealed class DeleteRoleUseCase(
         if (role.IsSystem)
         {
             throw new ArgumentException($"角色「{code}」是系统角色，不可删除", nameof(code));
+        }
+
+        if (role.IsRegistrationDefault)
+        {
+            throw new ArgumentException(
+                $"角色「{code}」是注册默认角色，先取消默认再删除",
+                nameof(code));
         }
 
         int memberCount = (await userRoles.ListAllAsync(cancellationToken).ConfigureAwait(false))

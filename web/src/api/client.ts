@@ -432,7 +432,7 @@ export const api = {
    * 新建跟单员。
    *
    * `leadAccountIndex` 指的是**带单员**（它的身份就是池索引）：池上还没有带单员时后端回 400，
-   * 不会替你建一个观察者——建观察者是「带单员」页的独立决定（选择器列的正是带单员）。
+   * 不会替你建一个观察者——建观察者是「带单管理」页的独立决定（选择器列的正是带单员）。
    * `exchangeConfigId` 只在**实盘**时给：下单必须落到某一个账号上。
    * 纸面不需要账号（它不碰任何交易所），传了后端也不会存。
    */
@@ -1338,6 +1338,8 @@ export interface AdminRoleSummary {
   code: string
   title: string
   isSystem: boolean
+  /** 新注册账号是否自动绑定这个角色。全库最多一个。 */
+  isRegistrationDefault: boolean
   memberCount: number
   menuCount: number
 }
@@ -1374,6 +1376,14 @@ export const adminRoleApi = {
 
   /** 删除角色。系统角色、还有成员……后端回 400（把它的 message 原样展示）。 */
   remove: (code: string) => deleteJson(`/api/admin/roles/${code}`),
+
+  /// 指定为注册默认角色：之后注册的账号自动获得它（改的是未来，不动已有绑定）。
+  setRegistrationDefault: (code: string) =>
+    sendWithoutBody(`/api/admin/roles/${code}/registration-default`, { method: 'PUT' }),
+
+  /// 取消注册默认身份；不再是默认角色时后端幂等返回 204。
+  clearRegistrationDefault: (code: string) =>
+    deleteJson(`/api/admin/roles/${code}/registration-default`),
 
   /** 这个角色被授权到的菜单 code。 */
   menus: (code: string) => getJson<RoleMenuAssignment>(`/api/admin/roles/${code}/menus`),

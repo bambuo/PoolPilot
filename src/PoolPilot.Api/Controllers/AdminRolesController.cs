@@ -23,7 +23,8 @@ public sealed class AdminRolesController(
     RenameRoleUseCase rename,
     DeleteRoleUseCase delete,
     GetRoleMenusUseCase getMenus,
-    SetRoleMenusUseCase setMenus) : ControllerBase
+    SetRoleMenusUseCase setMenus,
+    RegistrationDefaultRoleUseCase registrationDefault) : ControllerBase
 {
     /// <summary>全部角色（含成员数与菜单数）。</summary>
     [HttpGet]
@@ -46,12 +47,36 @@ public sealed class AdminRolesController(
         return NoContent();
     }
 
-    /// <summary>删除角色。系统角色与"还有成员"的角色会被 400 拒绝（都在用例里）。</summary>
+    /// <summary>删除角色。系统角色、注册默认角色与"还有成员"的角色会被 400 拒绝（都在用例里）。</summary>
     [HttpDelete("{code}")]
     [RequirePermission(PermissionKeys.SystemRoles, MenuActions.Delete)]
     public async Task<IActionResult> Delete(string code, CancellationToken cancellationToken = default)
     {
         await delete.ExecuteAsync(code, cancellationToken).ConfigureAwait(false);
+
+        return NoContent();
+    }
+
+    /// <summary>指定该角色为注册默认角色（之后注册的账号自动获得它）。系统角色会被 400 拒绝。</summary>
+    [HttpPut("{code}/registration-default")]
+    [RequirePermission(PermissionKeys.SystemRoles, MenuActions.Edit)]
+    public async Task<IActionResult> SetRegistrationDefault(
+        string code,
+        CancellationToken cancellationToken = default)
+    {
+        await registrationDefault.SetAsync(code, cancellationToken).ConfigureAwait(false);
+
+        return NoContent();
+    }
+
+    /// <summary>取消该角色的注册默认身份；它不再是默认角色时幂等返回 204。</summary>
+    [HttpDelete("{code}/registration-default")]
+    [RequirePermission(PermissionKeys.SystemRoles, MenuActions.Edit)]
+    public async Task<IActionResult> ClearRegistrationDefault(
+        string code,
+        CancellationToken cancellationToken = default)
+    {
+        await registrationDefault.ClearAsync(code, cancellationToken).ConfigureAwait(false);
 
         return NoContent();
     }

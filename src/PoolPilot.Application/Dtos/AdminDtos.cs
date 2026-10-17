@@ -39,6 +39,9 @@ public sealed record AdminRoleDto
 
     public required bool IsSystem { get; init; }
 
+    /// <summary>新注册账号是否自动绑定这个角色。全库最多一个。</summary>
+    public required bool IsRegistrationDefault { get; init; }
+
     /// <summary>持有该角色的账号数。</summary>
     public required int MemberCount { get; init; }
 

@@ -103,7 +103,12 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
 
 - **首个账号自动成为超级管理员**：注册成功时若它是全库唯一的账号，就绑上 `superadmin`。
   判据只有一处（`SuperadminBootstrap`），注册路径与启动播种共用。
-- **之后的账号默认没有任何角色**。注册保持开放，但开放不等于送权限。
+- **之后的账号绑定「注册默认角色」**（如果角色管理里指定了）：默认角色只影响之后注册的账号，
+  不改已有绑定；全库最多一个，换一个默认会自动清掉旧的。没有指定时注册账号仍然无角色——
+  注册保持开放，但开放不等于送权限。
+- **系统角色不能设为注册默认**（尤其 `superadmin`：那等于让每个注册者直接拿到全部权限）；
+  注册默认角色也不能直接删除，先取消默认。默认角色被绑定后同样**立刻重建策略**，
+  否则新账号登录后看得到角色名却没有任何权限。
 - **启动播种**：`roles` 里没有 `superadmin` 就建；`menus` 为空就播种内置菜单；
   库里恰有一个账号且它没有任何角色时，把它绑成 `superadmin` 并打 `LogWarning`——
   否则那个账号连「菜单管理」都打不开，系统再也回不到可配置状态。
@@ -124,6 +129,7 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
   `PUT /api/admin/users/{id}/roles`（`edit`）。
 - 「角色管理」（`menu:system-roles`）：`GET /api/admin/roles`（`view`）、
   `PUT /api/admin/roles/{code}`（`edit`）、`DELETE /api/admin/roles/{code}`（`delete`）、
+  `PUT/DELETE /api/admin/roles/{code}/registration-default`（`edit`——指定/取消注册默认角色）、
   `GET /api/admin/roles/{code}/menus`（`view`）、`PUT /api/admin/roles/{code}/menus`（`edit`）、
   `POST /api/roles`（`edit`——角色是谁建的这件事属于「角色管理」，不挂在菜单管理上）。
 
@@ -142,9 +148,9 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
 
 - **「总览」**（`menu:graph`）：`GET /api/monitor/events`、`GET /api/monitor/watch-state`（`view`）。
 - **「池列表」**（`menu:pools`）：`GET /api/pools`、`GET /api/pools/{accountIndex}`（均 `view`）。
-- **「带单员」**（`menu:leads`）：`GET /api/lead-traders`、`GET /api/lead-traders/{accountIndex}`（`view`）；
+- **「带单管理」**（`menu:leads`）：`GET /api/lead-traders`、`GET /api/lead-traders/{accountIndex}`（`view`）；
   `PUT /api/lead-traders/{accountIndex}`（`edit`）；`DELETE /api/lead-traders/{accountIndex}`（`delete`）。
-- **「跟单」**（`menu:copy-list`）：`GET /api/followers`、`GET /api/followers/{id}`、
+- **「跟单管理」**（`menu:copy-list`）：`GET /api/followers`、`GET /api/followers/{id}`、
   `GET /api/followers/{id}/live-account`、`GET /api/followers/{id}/live-orders`（`view`）；
   `POST /api/followers`、`PUT /api/followers/{id}`、`POST /api/followers/{id}/live-positions/close`
   （`edit`，最后一处是**真实平仓**）；`DELETE /api/followers/{id}`（`delete`）。
@@ -153,7 +159,7 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
   `POST /api/exchanges`、`PUT /api/exchanges/{id}`、
   `POST /api/exchanges/live-order/plan`（`edit`——下单规划是**对外请求**）；
   `DELETE /api/exchanges/{id}`（`delete`——全站统一的"删=delete"）。
-  `POST /api/exchanges/{id}/probe` 例外：它是「跟单」页新建实盘时**自动**调用去读可用保证金的，
+  `POST /api/exchanges/{id}/probe` 例外：它是「跟单管理」页新建实盘时**自动**调用去读可用保证金的，
   用手工探测当门槛会连带把跟单流程掐掉——因此它要 `menu:exchanges` **或** `menu:copy-list` 的 `edit`
   （`RequireAnyPermissionAttribute`，见下）。
 - **「标的映射」**（`menu:symbol-mappings`）：`GET platforms`、`GET source-symbols`、`GET symbols`、
@@ -167,7 +173,7 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
   `POST providers`、`PUT providers/{id}`、`POST providers/{id}/test`、`PUT templates/{purpose}`（`edit`）；
   `DELETE providers/{id}`（`delete`）。
 
-**详情接口一律挂父菜单**（已定口径）：`/api/pools/{index}` → 「池列表」、`/api/followers/{id}*` → 「跟单」，
+**详情接口一律挂父菜单**（已定口径）：`/api/pools/{index}` → 「池列表」、`/api/followers/{id}*` → 「跟单管理」，
 不做"只有详情权限"的组合。
 
 ### 白名单（匿名 / 登录即可）

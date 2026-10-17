@@ -43,6 +43,9 @@ public interface IRoleRepository
 
     Task<Role?> FindByCodeAsync(string code, CancellationToken cancellationToken = default);
 
+    /// <summary>当前注册默认角色；没有指定时为 <c>null</c>。</summary>
+    Task<Role?> FindRegistrationDefaultAsync(CancellationToken cancellationToken = default);
+
     /// <summary>新建并返回带库分配主键的角色。</summary>
     Task<Role> CreateAsync(Role role, CancellationToken cancellationToken = default);
 
@@ -51,6 +54,12 @@ public interface IRoleRepository
     /// IsSystem 由系统维护，两者都不是"编辑角色"能碰的。
     /// </summary>
     Task UpdateAsync(Role role, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 把注册默认角色切换为 <paramref name="code"/>；<c>null</c> 表示取消默认。
+    /// **一次写操作把其余角色一并清掉**，所以库里的默认角色恒定最多一个。
+    /// </summary>
+    Task SetRegistrationDefaultAsync(string? code, CancellationToken cancellationToken = default);
 
     /// <summary>按 code 删除角色，连同它的用户绑定与菜单绑定（没有外键级联，子表在这里清）。</summary>
     Task DeleteAsync(string code, CancellationToken cancellationToken = default);
