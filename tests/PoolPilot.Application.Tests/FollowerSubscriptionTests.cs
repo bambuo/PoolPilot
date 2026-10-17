@@ -403,6 +403,23 @@ public sealed class FollowerSubscriptionTests
             return Task.CompletedTask;
         }
 
+        public Task SetOwnerCredentialAsync(
+            long id,
+            string ownerCredentialHash,
+            CancellationToken cancellationToken = default)
+        {
+            // 匿名公开行的创建者凭证要在建行之后回填（派生的输入之一就是 Id）：
+            // 这一组用例不建公开行，但接口形状要如实实现，否则回填这一步没地方落
+            int index = _rows.FindIndex(f => f.Id == id);
+
+            if (index >= 0)
+            {
+                _rows[index] = _rows[index] with { OwnerCredentialHash = ownerCredentialHash };
+            }
+
+            return Task.CompletedTask;
+        }
+
         public Task DeleteAsync(long id, CancellationToken cancellationToken = default)
         {
             _rows.RemoveAll(f => f.Id == id);

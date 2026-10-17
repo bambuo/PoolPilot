@@ -51,8 +51,10 @@ const { user } = useSession()
 const { tree } = useMenu()
 const { signingOut, signOut } = useSignOut()
 
-/// 公开页（登录 / 注册 / 初始化 / MFA）不套工作台外壳：那时还没有"当前用户"，
-/// 一排导航点进去只会被守卫弹回登录页。判据与路由守卫共用同一处 meta。
+/// 公开页不套工作台外壳：登录/注册/初始化/MFA 那时还没有"当前用户"，
+/// 一排导航点进去只会被守卫弹回登录页；公开带单/公开跟单是给匿名访客看的，
+/// 它们的极简头部（PublicPageHeader）由页面自己引入，不属于权限导航树。
+/// 判据与路由守卫共用同一处 meta——两处各写一份清单，早晚会有一处漏掉新页面。
 const isPublicPage = computed(() => route.meta.public === true)
 
 /// 从一段子树里收集**可进入且进导航**的菜单（`menu` 且 `isVisible` 且有 path）。
@@ -142,7 +144,7 @@ const { theme, toggle: toggleTheme } = useTheme()
 </script>
 
 <template>
-  <!-- 公开页（登录 / 注册 / 初始化 / MFA）：只有一份居中的卡片，没有顶栏与导航 -->
+  <!-- 公开页：只有一张卡片或页面自带的外壳，没有工作台顶栏与权限导航（判据见 script） -->
   <RouterView v-if="isPublicPage" />
 
   <a-layout v-else class="shell">

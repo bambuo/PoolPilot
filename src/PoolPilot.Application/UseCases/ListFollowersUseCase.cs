@@ -28,6 +28,23 @@ public sealed class ListFollowersUseCase(
     {
         IReadOnlyList<Follower> configured = await followers.ListAsync(cancellationToken).ConfigureAwait(false);
 
+        return await ExecuteAsync(configured, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 按**给定的一批跟单员**装配卡片。
+    ///
+    /// 收这一个入口的理由是"账的算法只能有一份"：公开跟单页要同一套估值与降级口径
+    /// （见 <see cref="ListPublicFollowersUseCase"/>），但它先按"公开 + 纸面"把行筛过——
+    /// 于是筛行发生在调用方，装配仍然走这里，而不是在公开侧重写一遍。
+    /// 私有端点走的正是同一条代码路径，行为与响应完全不变。
+    /// </summary>
+    public async Task<IReadOnlyList<FollowerSummaryDto>> ExecuteAsync(
+        IReadOnlyList<Follower> configured,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configured);
+
         if (configured.Count == 0)
         {
             return [];
@@ -118,6 +135,7 @@ public sealed class ListFollowersUseCase(
             // 填上"看起来像那么回事"的数（比如把未实现盈亏塞进 RealizedPnl）才是真的误导
             RealizedPnl = 0m,
             UnrealizedPnl = account.UnrealizedPnl,
+            Fees = 0m,
 
             // 比例 = 本金 ÷ **池子权益**，而池子权益要取池子快照（列表刻意不取）。
             // 拿钱包余额当分母会算出另一个数（实测 0.551% vs 详情页 0.0184%），
@@ -150,6 +168,7 @@ public sealed class ListFollowersUseCase(
         ReturnPercent = d.ReturnPercent,
         RealizedPnl = d.RealizedPnl,
         UnrealizedPnl = d.UnrealizedPnl,
+        Fees = d.Fees,
         Scale = d.Scale,
         PoolEquity = d.PoolEquity,
         GrossNotional = d.GrossNotional,
@@ -157,15 +176,20 @@ public sealed class ListFollowersUseCase(
         SkipCount = d.SkipCount,
         Positions =
         [
+            // 非零仓位、按名义额降序的**完整**清单。这里不裁剪成前两项：卡片是一个
+            // 固定两行高的视口 + 跑马灯（见 FollowListView 的 .card-positions），
+            // 在这里截断会让第三行之后的仓位永远看不见，而那段滚动也成了死代码。
+            // 只过滤 Size == 0 的行——那是已平掉的仓位，不是"看不下的仓位"。
             .. d.Positions
                 .Where(p => p.Size != 0m)
                 .OrderByDescending(p => Math.Abs(p.Notional))
-                .Take(2)
                 .Select(p => new PaperPositionBriefDto
                 {
+                    MarketId = p.MarketId,
                     Symbol = p.Symbol,
                     Side = p.Side,
                     Size = p.Size,
+                    EntryVwap = p.EntryVwap,
                     Notional = p.Notional,
                     UnrealizedPnl = p.UnrealizedPnl,
                     TrackingDeviationPercent = p.TrackingDeviationPercent,
@@ -204,6 +228,7 @@ public sealed class ListFollowersUseCase(
         ReturnPercent = 0m,
         RealizedPnl = 0m,
         UnrealizedPnl = 0m,
+        Fees = 0m,
         Scale = 0m,
         PoolEquity = 0m,
         GrossNotional = 0m,

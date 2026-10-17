@@ -283,6 +283,30 @@ public sealed class FollowerRepository(PoolPilotDbContext db) : IFollowerReposit
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task SetOwnerCredentialAsync(
+        long id,
+        string ownerCredentialHash,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerCredentialHash);
+
+        // 这里必须用**被跟踪**的查询：上一趟读（GetAsync/ListAsync）都是 AsNoTracking，
+        // 照那个写法改完 SaveChanges 会什么都不做——列补不上，而接口照样回 201
+        FollowerRecord? row = await db.Followers
+            .FirstOrDefaultAsync(f => f.Id == id, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (row is null)
+        {
+            // 建行与写凭证之间被删掉了：没有对象可写，也不该把已删的行救回来
+            return;
+        }
+
+        row.OwnerCredentialHash = ownerCredentialHash;
+
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task DeleteAsync(long id, CancellationToken cancellationToken = default)
     {
         await db.Followers

@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using PoolPilot.Application.Abstractions;
 using PoolPilot.Domain.Entities;
 using PoolPilot.Domain.Enums;
 using PoolPilot.Domain.Following;
@@ -26,6 +27,7 @@ public sealed class PaperFollower(
     MarketDataCache market,
     IOptions<LeadTraderOptions> options,
     ILogger<PaperFollower> logger,
+    IFollowerLedgerActivity activity,
     Follower config) : IFollower
 {
     /// <summary>读取流水时的上限，需足够大以完整重放仓位账。</summary>
@@ -261,6 +263,11 @@ public sealed class PaperFollower(
                 TakenAt = LighterTimestamp.FromMilliseconds(now.ToUnixTimeMilliseconds()),
             },
             cancellationToken).ConfigureAwait(false);
+
+        // 流水与权益点都已落库（有成交时上面刚写过流水）：立刻让公开页重装配。
+        // 行情变化走 market_stats 的逐帧补丁；"新流水/新权益点出现了"不走那条路，
+        // 因为流水与权益曲线只能从库里重放出来。
+        activity.NotifyFollowerChanged(Id);
 
         _state = state with { LastEquityPointAt = now };
     }

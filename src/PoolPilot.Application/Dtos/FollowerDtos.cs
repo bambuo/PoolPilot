@@ -178,7 +178,7 @@ public sealed record PaperEquityPointDto
 /// <summary>开始跟单（新建一个跟单员）的请求。</summary>
 public sealed record CreateFollowerRequest
 {
-    /// <summary>要订阅的带单员（池账户索引）。该池若还没有带单员，会自动补一个。</summary>
+    /// <summary>要订阅的带单员（池账户索引）。该池没有带单员时请求被拒绝——跟的是带单员，不是池。</summary>
     public required long LeadAccountIndex { get; init; }
 
     /// <summary>投入的本金（USDC）。必须为正。</summary>
@@ -280,6 +280,9 @@ public sealed record FollowerSummaryDto
 
     public required decimal UnrealizedPnl { get; init; }
 
+    /// <summary>累计手续费。卡片本身不显示，但公开页的行情事件补丁要靠它重算权益。</summary>
+    public required decimal Fees { get; init; }
+
     /// <summary>规模比例 = 本金 / 池子权益。</summary>
     public required decimal Scale { get; init; }
 
@@ -292,7 +295,13 @@ public sealed record FollowerSummaryDto
     /// <summary>因约束被跳过的信号数。不为 0 时卡片要显著标出——那是"没跟上"。</summary>
     public required int SkipCount { get; init; }
 
-    /// <summary>持仓摘要，卡片上最多列前两项。</summary>
+    /// <summary>
+    /// 持仓清单（非零仓位，按名义额降序）。
+    ///
+    /// 这里给的是**完整**清单而不是"前两项"：卡片上是一个固定两行高的视口，
+    /// 超出部分自动上下滚动（`FollowListView` 的 .card-positions）。在服务端裁剪等于
+    /// 把第三行之后的仓位藏起来，而那个滚动条从此永远不会出现。
+    /// </summary>
     public required IReadOnlyList<PaperPositionBriefDto> Positions { get; init; }
 
     /// <summary>取不到盯市价的市场数。&gt; 0 时未实现盈亏不完整，卡片要提示。</summary>
@@ -302,12 +311,18 @@ public sealed record FollowerSummaryDto
 /// <summary>卡片上的持仓摘要。</summary>
 public sealed record PaperPositionBriefDto
 {
+    /// <summary>市场 Id。卡片不显示，公开页行情事件按它定位要修补的那一行。</summary>
+    public required int MarketId { get; init; }
+
     public required string Symbol { get; init; }
 
     /// <summary><c>long</c> / <c>short</c>；空仓时为 <c>null</c>。</summary>
     public required string? Side { get; init; }
 
     public required decimal Size { get; init; }
+
+    /// <summary>开仓均价。公开页按它和实时中间价重算未实现盈亏。</summary>
+    public required decimal EntryVwap { get; init; }
 
     public required decimal Notional { get; init; }
 

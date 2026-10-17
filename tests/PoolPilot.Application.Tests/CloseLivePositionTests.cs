@@ -338,7 +338,22 @@ public sealed class CloseLivePositionTests
             return Task.CompletedTask;
         }
 
-        public Task DeleteAsync(long id, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SetOwnerCredentialAsync(
+            long id,
+            string ownerCredentialHash,
+            CancellationToken cancellationToken = default)
+        {
+            // 这一组用例不建公开行；照接口的形状实现，回填落在它自己的行上
+            if (Stored is { } stored && stored.Id == id)
+            {
+                Stored = stored with { OwnerCredentialHash = ownerCredentialHash };
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteAsync(long id, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 
     private sealed class FakeSync : ILeadTraderSync

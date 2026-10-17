@@ -102,7 +102,11 @@ public sealed class FollowersController(
             : Ok(follower);
     }
 
-    /// <summary>开始跟单：新建一个跟单员订阅某个带单员。该池没有带单员时会自动补一个。</summary>
+    /// <summary>
+    /// 开始跟单：新建一个跟单员订阅某个带单员。
+    /// 该池还没有带单员时回 400——跟单员订阅的是带单员而不是池，先到「带单员」页建观察者。
+    /// （这里曾经写着"会自动补一个"，与实现不符，且从初始提交起就不符。）
+    /// </summary>
     [HttpPost]
     [RequirePermission(PermissionKeys.CopyList, MenuActions.Edit)]
     public async Task<ActionResult<FollowerDto>> Create(
@@ -134,7 +138,7 @@ public sealed class FollowersController(
     [RequirePermission(PermissionKeys.CopyList, MenuActions.Delete)]
     public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken = default)
     {
-        await delete.ExecuteAsync(id, cancellationToken).ConfigureAwait(false);
+        await delete.ExecuteAsync(id, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return NoContent();
     }

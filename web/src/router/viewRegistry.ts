@@ -10,6 +10,8 @@ import type { Component } from 'vue'
 /// 树上的节点也才能靠 code 找到它的视图。
 ///
 /// 视图文件共 19 个（17 个既有 + 本批新增的用户管理与角色管理）。
+/// 公开带单/公开跟单两个浏览页**不在这张表里**：它们不属于按权限注册的集合，
+/// 由静态路由直接懒加载（见 router/index.ts）。
 export type ViewLoader = () => Promise<Component>
 
 export const viewRegistry: Record<string, ViewLoader> = {

@@ -45,6 +45,40 @@ public sealed record Follower
 
     public required LighterTimestamp CreatedAt { get; init; }
 
+    // ── 公开面（/api/public/*）的四列 ─────────────────────────
+    // 工作台建的行这四列一律保持默认值（false / null / null / null）：
+    // 现状与既有行为零变化。只有公开页建的纸面跟单会把 IsPublic 置真，并按登录与否
+    // 写两个 owner 列中的**恰好一个**（见 PublicFollowerOwnership 的判据）。
+
+    /// <summary>
+    /// 这一行是否出现在公开跟单页上。
+    ///
+    /// 判据只有这一个布尔，不看两个 owner 列——"看得到"与"谁能删"是两件事：
+    /// 公开行对所有人可读，删除权才由 owner 列决定。
+    /// </summary>
+    public bool IsPublic { get; init; }
+
+    /// <summary>
+    /// 创建者（会话用户主键）。公开页 + **已登录**时写这一列，<see cref="OwnerCredentialHash"/> 留 null。
+    ///
+    /// 存 Id 而不是哈希：登录态本身可信，"是不是同一个人"由会话直接回答，不需要再派生凭证。
+    /// </summary>
+    public long? OwnerUserId { get; init; }
+
+    /// <summary>
+    /// 创建者凭证哈希（由访客密钥与**本行 Id** 派生）。公开页 + **匿名**时写这一列。
+    ///
+    /// 派生而不是直接存访客密钥：密钥一旦落库就等于"库被读到就能删掉任何人的跟单"，
+    /// 而行级派生值既认不出人也不能跨行复用。访客密钥只存在于 Cookie，永不进库。
+    /// </summary>
+    public string? OwnerCredentialHash { get; init; }
+
+    /// <summary>
+    /// 公开页上的自定义名称（trim 后 ≤ <c>PublicPageLimits.LabelMaxLength</c>，可为 null）。
+    /// 纯展示用途，不参与任何判据。
+    /// </summary>
+    public string? Label { get; init; }
+
     /// <summary>按池子权益算出的规模比例。<see cref="UsdAmount.Zero"/> 或负值时返回 0。</summary>
     public decimal ScaleAgainst(PoolSnapshot pool) =>
         pool.TotalAssetValue.Value <= 0m

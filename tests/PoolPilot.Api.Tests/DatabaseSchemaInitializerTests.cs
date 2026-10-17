@@ -1,7 +1,9 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+using PoolPilot.Domain.Entities;
 using PoolPilot.Infrastructure.Persistence;
 
 namespace PoolPilot.Api.Tests;
@@ -13,6 +15,10 @@ namespace PoolPilot.Api.Tests;
 /// 所以给模型加了新表之后，老库永远缺那张表，接口只报 `no such table`，
 /// 错误信息完全没提"你需要重建数据库"。补建逻辑因此必须存在，且必须
 /// **只加缺失的对象、不碰已有的表**（重建会丢数据）。
+///
+/// 2026-10 起这一趟还多了一层：**补列**（followers 的公开面四列就是这么长在老库上的）。
+/// 于是这里多了三条针对列的钉子——可空列要补得上且不许改写老行，
+/// NOT NULL 无默认值的缺列只许记 Warning 不许猜。
 ///
 /// 这里曾经还有两条"旧纸面账户迁成跟单员"的用例，随那次一次性迁移的移除一并删掉——
 /// 代码只保留最新状态，不再维护"从旧版本升上来"的路径。
@@ -126,6 +132,181 @@ public sealed class DatabaseSchemaInitializerTests
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    // ── 补列（公开面四列 + 那条「不许猜」的边界）──────────────
+
+    /// <summary>followers 的公开面四列——全可空，正是补列这一趟允许的形态。</summary>
+    private static readonly string[] PublicFollowerColumns =
+        ["IsPublic", "OwnerUserId", "OwnerCredentialHash", "Label"];
+
+    [TestMethod]
+    public void EnsureSchema_WhenFollowersMissingPublicColumns_BackfillsThemAndKeepsOldRowsIntact()
+    {
+        string path = Temp();
+
+        try
+        {
+            long oldRowId;
+
+            using (PoolPilotDbContext db = Open(path))
+            {
+                DatabaseSchemaInitializer.EnsureSchemaAsync(db, NullLogger.Instance).GetAwaiter().GetResult();
+
+                FollowerRecord row = new()
+                {
+                    LeadAccountIndex = 42L,
+                    InitialCapital = 500m,
+                    Mode = "Paper",
+                    IsActive = true,
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                };
+
+                db.Followers.Add(row);
+                db.SaveChangesAsync().GetAwaiter().GetResult();
+                oldRowId = row.Id;
+            }
+
+            // 假装这是公开面引入之前的老库：把那四列删掉（都可空、无索引，SQLite 允许逐列 DROP）
+            foreach (string column in PublicFollowerColumns)
+            {
+                Execute(path, $"ALTER TABLE \"followers\" DROP COLUMN \"{column}\"");
+            }
+
+            using (PoolPilotDbContext db = Open(path))
+            {
+                IReadOnlyList<string> created = DatabaseSchemaInitializer
+                    .EnsureSchemaAsync(db, NullLogger.Instance).GetAwaiter().GetResult();
+
+                foreach (string column in PublicFollowerColumns)
+                {
+                    CollectionAssert.Contains(
+                        created.ToList(),
+                        $"followers.{column}",
+                        $"缺列 {column} 应当被按当前模型补上，并出现在返回的清单里");
+
+                    Assert.IsTrue(ColumnExists(path, "followers", column), $"补列后库里应含 {column}");
+                }
+            }
+
+            // 老行行为零变化：补出来的 NULL 在领域侧读成「工作台建的行」，
+            // 而且私有端点的读路径（FollowerRepository）依然读得到它
+            using (PoolPilotDbContext db = Open(path))
+            {
+                Follower? stored = new FollowerRepository(db)
+                    .GetAsync(oldRowId).GetAwaiter().GetResult();
+
+                Assert.IsNotNull(stored, "补列不该动既有行——私有列表读的就是这一行");
+                Assert.IsFalse(stored.IsPublic, "NULL 收口成 false：老行永远不是公开行");
+                Assert.IsNull(stored.OwnerUserId);
+                Assert.IsNull(stored.OwnerCredentialHash);
+                Assert.IsNull(stored.Label);
+
+                // 库里存的确实是 NULL 而不是被顺手改写成了 false/空串：改写老行不在这趟的权力范围内
+                Assert.AreEqual(
+                    1L,
+                    CountRows(path, "followers", "IsPublic IS NULL AND OwnerUserId IS NULL AND Label IS NULL"),
+                    "补列只能给老行落 NULL，不许替它们编一个值");
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [TestMethod]
+    public void EnsureSchema_WhenMissingNotNullColumnWithoutDefault_WarnsAndDoesNotGuess()
+    {
+        string path = Temp();
+
+        try
+        {
+            using (PoolPilotDbContext db = Open(path))
+            {
+                DatabaseSchemaInitializer.EnsureSchemaAsync(db, NullLogger.Instance).GetAwaiter().GetResult();
+
+                db.Followers.Add(new FollowerRecord
+                {
+                    LeadAccountIndex = 42L,
+                    InitialCapital = 500m,
+                    Mode = "Paper",
+                    IsActive = true,
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                });
+
+                db.SaveChangesAsync().GetAwaiter().GetResult();
+            }
+
+            // IsActive：NOT NULL、无默认值。「该给老行填什么」是一个业务决定，补列这一趟不许替人做
+            Execute(path, "ALTER TABLE \"followers\" DROP COLUMN \"IsActive\"");
+
+            List<string> warnings = [];
+
+            using (PoolPilotDbContext db = Open(path))
+            {
+                IReadOnlyList<string> created = DatabaseSchemaInitializer
+                    .EnsureSchemaAsync(db, new CollectingLogger(warnings)).GetAwaiter().GetResult();
+
+                Assert.IsFalse(
+                    created.Contains("followers.IsActive"),
+                    "NOT NULL 且无默认值的缺列不许被补上——补它等于把猜出来的值写进每个人的库");
+
+                Assert.IsTrue(
+                    warnings.Any(w => w.Contains("IsActive", StringComparison.Ordinal)),
+                    "必须留下一条点名这一列的 Warning，否则使用者只会看到查询报错");
+            }
+
+            Assert.IsFalse(ColumnExists(path, "followers", "IsActive"), "不补就是真没补，Warning 之后库里状态不变");
+            Assert.AreEqual(1L, CountRows(path, "followers"), "这一趟一个老行都不该动");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static bool ColumnExists(string path, string table, string column)
+    {
+        using SqliteConnection connection = new($"Data Source={path}");
+        connection.Open();
+
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM PRAGMA_TABLE_INFO('{table}') WHERE name = '{column}'";
+
+        return Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) > 0;
+    }
+
+    /// <summary>只收 Warning 的极简 logger：补列这一趟的「不许猜」是靠一条日志兑现的，
+    /// 没有它就只能靠读代码的人相信那行 if 存在。</summary>
+    private sealed class CollectingLogger(List<string> warnings) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => NullScope.Instance;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Warning)
+            {
+                warnings.Add(formatter(state, exception));
+            }
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            internal static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
+            }
         }
     }
 

@@ -1,9 +1,12 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 using PoolPilot.Api.Authorization;
 using PoolPilot.Api.Hubs;
 using PoolPilot.Api.Middleware;
+using PoolPilot.Api.RateLimiting;
+using PoolPilot.Api.Streaming;
 using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.UseCases;
 using PoolPilot.Domain.Constants;
@@ -151,6 +154,7 @@ public sealed class Program
         //   库覆盖到的（系统配置/账户快照/合约规格）走 CryptoClients.Net；
         //   池枚举、净值序列、池的成交与挂单、盘口这五条库没有，走自研的扩展
         builder.Services.AddSingleton<LighterWebSocketClient>();
+        builder.Services.AddSingleton<IMarketStatsSubscription, MarketStatsSubscription>();
 
         builder.Services.AddHttpClient<LighterPoolDataExtension>(http =>
         {
@@ -180,6 +184,58 @@ public sealed class Program
         builder.Services.AddScoped<ListFollowersUseCase>();
         builder.Services.AddScoped<UpdateFollowerUseCase>();
         builder.Services.AddScoped<DeleteFollowerUseCase>();
+
+        // ── 公开面（/api/public/*）──────────────────────────────
+        // 九个 REST 端点 + 一条 SSE 流。装配全部复用上面那几条私有路径（账的算法只有一份），
+        // 这里加的是"筛行 + 裁字段 + 归属判据 + 数量上限"这几层公开面自己的规则。
+        // 这些端点没有权限门：它们不进菜单表、不挂 Casbin 主体（docs/PERMISSIONS.md）。
+        builder.Services.AddScoped<PublicLeadTraderQuota>();
+        builder.Services.AddScoped<ListPublicLeadTradersUseCase>();
+        builder.Services.AddScoped<GetPublicLeadTraderDetailUseCase>();
+        builder.Services.AddScoped<AddPublicLeadTraderUseCase>();
+        builder.Services.AddScoped<PublicPoolOptionsUseCase>();
+        builder.Services.AddScoped<ListPublicFollowersUseCase>();
+        builder.Services.AddScoped<GetPublicFollowerUseCase>();
+        builder.Services.AddScoped<ListOwnedPublicFollowerIdsUseCase>();
+        builder.Services.AddScoped<CreatePublicFollowerUseCase>();
+        builder.Services.AddScoped<DeletePublicFollowerUseCase>();
+
+        // 池名候选的读上游要带缓存（上游按权重限速，匿名流量不能每次穿透；理由见 PoolCatalog 的类说明）
+        builder.Services.AddSingleton<IPoolCatalog, PoolCatalog>();
+
+        // "这两页开没开"。与 LiveTradingLimits 同一种注册法：绑成实例再注一次，
+        // 应用层因此不依赖任何配置包；代码里的默认值是两条 false（默认不公开）
+        builder.Services.AddSingleton(
+            builder.Configuration.GetSection("PublicPages").Get<PublicPageSettings>() ?? new PublicPageSettings());
+
+        // "公开页的调用者是谁"——会话用户 + 访客 Cookie。只有表现层读得懂这两样
+        builder.Services.AddScoped<PublicCallerAccessor>();
+
+        // 匿名面上的限流：这里既没有登录失败锁定也没有 Casbin 主体可问（形状见该类说明）
+        builder.Services.AddPublicPageRateLimiting();
+
+        // 公开写成功后的后台运行期同步：不挡响应，但也不能完全不通知（已删行会继续落账）
+        builder.Services.AddScoped<PublicWriteSync>();
+
+        // ── 公开页实时流（/api/public/stream）────────────────────
+        // 单例：订阅者表、在线详情与连接额度都是进程级的。装配器每次开新作用域，
+        // 因此一条挂几分钟的长连接不会把某个请求的 DbContext 一直拽住。
+        // 连接上限绑配置节 PublicPages:Stream（缺省仍是代码常量），
+        // 只为让测试能降到 2 验证 503 分支
+        builder.Services.AddSingleton(
+            builder.Configuration.GetSection("PublicPages:Stream").Get<PublicStreamSettings>()
+                ?? new PublicStreamSettings());
+        builder.Services.AddSingleton<IPublicPageFeedAssembler, PublicPageFeedAssembler>();
+        builder.Services.AddSingleton<PublicPageFeed>();
+
+        // 纸面复制管线落账后，把同一条 feed 当变更通知器用：公开页立即推帧，不靠定时刷新。
+        // 这是同进程内的一条单向通知，不是新的事件总线。
+        builder.Services.AddSingleton<IFollowerLedgerActivity>(
+            sp => sp.GetRequiredService<PublicPageFeed>());
+        builder.Services.AddSingleton<ILeadActivity>(
+            sp => sp.GetRequiredService<PublicPageFeed>());
+        builder.Services.AddSingleton<IMarketPriceActivity>(
+            sp => sp.GetRequiredService<PublicPageFeed>());
 
         // 交易所配置与凭据。凭据按原样保存（明文）——加密那一套已移除，
         // 理由见 ExchangeConfig：密钥与密文同库等于没防，而"看起来加密了"比明文更误导
@@ -283,7 +339,9 @@ public sealed class Program
 
         builder.Services.AddSingleton<IMonitorBroadcaster, SignalRMonitorBroadcaster>();
         builder.Services.AddSingleton<MarketDataCache>();
-        builder.Services.AddSingleton<IMarkPrices, MarkPriceProvider>();
+        builder.Services.AddSingleton<MarkPriceProvider>();
+        builder.Services.AddSingleton<IMarkPrices>(sp => sp.GetRequiredService<MarkPriceProvider>());
+        builder.Services.AddSingleton<IMarkPriceSink>(sp => sp.GetRequiredService<MarkPriceProvider>());
         builder.Services.AddSingleton<LeadTraderRegistry>();
         builder.Services.AddSingleton<ILeadWatchState>(sp => sp.GetRequiredService<LeadTraderRegistry>());
 
@@ -333,6 +391,10 @@ public sealed class Program
         }
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+        // 限流排在认证之前：公开页的匿名流量根本不该先去解一遍 Cookie。
+        // 顺序对正确性没有影响（拒绝由 OnRejected 自己写响应），只是少做无用功
+        app.UseRateLimiter();
 
         // 顺序不能反：先认出"是谁"（认证），再判断"能不能"（授权）
         app.UseAuthentication();

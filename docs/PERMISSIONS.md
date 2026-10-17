@@ -181,6 +181,9 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
 - **登录即可**：自省类端点——`GET /api/auth/me`、`GET /api/auth/permissions`、`GET /api/menus/tree`、
   `GET /api/roles`。它们回答"我是谁 / 我能做什么 / 我看到哪些菜单"，不承载业务数据；
   没有角色的账号拿到的正是空树、空清单。
+- **匿名公开面**：`/api/public/*` 的 10 条端点（9 个 REST + 1 条 SSE）。它们是**业务数据端点**，
+  出现在这张表里是本仓库一个有意识的例外，理由与代价写在
+  [PUBLIC-PAGES.md](PUBLIC-PAGES.md) 与覆盖测试里那张表的注释中。
 
 - 未登录 → **401**（Cookie 处理器的 `OnRedirectToLogin`，JSON `{ error }`）；
   登录了但没权限 → **403**（权限属性返回 `ForbidResult`，走 `OnRedirectToAccessDenied`，
@@ -188,6 +191,17 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
 
 `/api/menus/tree` 只返回当前用户拥有 `view` 的节点——只在前端藏起来不够，地址栏照样进得去，
 所以过滤发生在服务端。节点的 `actions` 是"我在这个菜单上能做什么"，界面据此决定按钮是否可点。
+
+### 公开面为什么不在这套模型里
+
+`/api/public/*`（公开带单页与公开跟单页）**不挂权限点、不进菜单表**。
+这套模型回答的是"工作台里的这个人能不能做这件事"，而匿名访客不是一个主体：
+给他一个键，要么所有人都有（等于没有），要么先给他一个身份（他就不是匿名访客了）。
+
+顶在那里的三道闸是功能开关（`PublicPages`，默认关，关掉时回 404）、数量上限
+（`PoolPilot.Domain.Constants.PublicPageLimits`，代码常量）与按来源地址的限流。
+"创建者能删自己那条公开跟单"用的也不是角色，而是一枚访客 Cookie 派生出的能力
+（库里只存哈希）。整套设计与对外部署的前提见 [PUBLIC-PAGES.md](PUBLIC-PAGES.md)。
 
 ### 覆盖门禁测试（新端点漏网会红）
 

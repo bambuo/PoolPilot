@@ -320,7 +320,12 @@ async function ensureOk(response: Response): Promise<void> {
   throw new ApiError(response.status, detail)
 }
 
-async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
+/// 统一的 GET/POST JSON 出口。
+///
+/// 导出给 `api/public.ts`（匿名公开面）复用：错误体解析（{"error"}）与 401 统一出口
+/// 必须全站只有一套——公开端点设计上不回 401，但万一回了自己单写一份的代价
+/// 是"某个页面的会话过期不弹回登录"这种查半天的裂缝。
+export async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { accept: 'application/json' },
     // 会话在 Cookie 里（HttpOnly，脚本读不到），所以每个请求都要带上它。
@@ -353,7 +358,8 @@ async function sendWithoutBody(path: string, init?: RequestInit): Promise<void> 
 /// 单列一个助手而不是每次现写 `fetch(..., { method: 'DELETE' })`：那几处裸 fetch
 /// **绕过了 ensureOk**，于是 401 不会触发登出、失败被当成成功——四种删除各写一遍，
 /// 就各错一遍。这里统一走 ensureOk，语义与 sendWithoutBody 一致，只是把方法定死。
-function deleteJson(path: string): Promise<void> {
+/// 导出后匿名公开面（`api/public.ts` 的 W3）共用这一条删除路径。
+export function deleteJson(path: string): Promise<void> {
   return sendWithoutBody(path, { method: 'DELETE' })
 }
 
@@ -418,10 +424,11 @@ export const api = {
     }
   },
 
-  /** 开始跟单：新建一个跟单员订阅某个带单员。该池没有带单员时后端会自动补一个。 */
   /**
    * 新建跟单员。
    *
+   * `leadAccountIndex` 指的是**带单员**（它的身份就是池索引）：池上还没有带单员时后端回 400，
+   * 不会替你建一个观察者——建观察者是「带单员」页的独立决定（选择器列的正是带单员）。
    * `exchangeConfigId` 只在**实盘**时给：下单必须落到某一个账号上。
    * 纸面不需要账号（它不碰任何交易所），传了后端也不会存。
    */

@@ -41,6 +41,8 @@ public sealed class LeadTraderRegistry(
     IExchangeSymbolCatalogFactory catalogs,
     AccountStreamRegistry accountStreams,
     LiveTradingLimits limits,
+    IFollowerLedgerActivity ledgerActivity,
+    ILeadActivity leadActivity,
     ILogger<LeadTraderRegistry> logger,
     ILoggerFactory loggerFactory) : ILeadWatchState, ILeadTraderSync, IDisposable
 {
@@ -303,6 +305,7 @@ public sealed class LeadTraderRegistry(
             market,
             options,
             loggerFactory.CreateLogger<PaperFollower>(),
+            ledgerActivity,
             follower);
 
     /// <summary>
@@ -497,6 +500,9 @@ public sealed class LeadTraderRegistry(
             // 没有仓位变化，但池子权益可能变了（而规模比例依赖权益），
             // 所以仍然让订阅者按当前状态对齐一次——差额为 0 时它什么都不做。
             await runtime.CatchUpSubscribersAsync(current, cancellationToken).ConfigureAwait(false);
+
+            // 池子的权益/仓位快照变了，公开页的卡片与详情要跟着刷新
+            leadActivity.NotifyLeadChanged(pool.Value);
             return;
         }
 
@@ -526,6 +532,10 @@ public sealed class LeadTraderRegistry(
         {
             await runtime.NotifyAsync(signal, current, cancellationToken).ConfigureAwait(false);
         }
+
+        // 跟单员落账后还会走 IFollowerLedgerActivity；这里覆盖"池动了但没有新流水"
+        // （例如规模比例/池子权益变化）的情况。
+        leadActivity.NotifyLeadChanged(pool.Value);
     }
 
     /// <summary>

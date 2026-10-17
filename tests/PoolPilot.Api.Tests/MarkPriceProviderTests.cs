@@ -57,6 +57,22 @@ public sealed class MarkPriceProviderTests
     }
 
     [TestMethod]
+    public async Task Update_FromMarketStats_ReplacesTheRestValue_WithoutTouchingUpstream()
+    {
+        // 事件驱动的核心：market_stats 帧写进缓存之后，估值读取直接拿实时中间价，
+        // 不再等 60 秒过期，也不该再打一次 REST 盘口。
+        FakePoolsClient client = new(delay: TimeSpan.Zero);
+        MarkPriceProvider provider = Provider(client);
+
+        provider.Update(9, PriceAmount.From(123m));
+
+        MarkPrices result = await provider.ResolveAsync([9], CancellationToken.None);
+
+        Assert.AreEqual(123m, result.Prices[9].Value);
+        Assert.AreEqual(0, client.Calls, "实时行情已覆盖该市场，不该再走 REST");
+    }
+
+    [TestMethod]
     public async Task ResolveAsync_WhenOneMarketFails_ReportsItAndKeepsTheRest()
     {
         // 一个市场取不到价，界面显示"该市场未实现盈亏不可得"；

@@ -220,6 +220,21 @@ public interface IFollowerRepository
     /// <summary>更新本金/启用状态等可变字段（按主键）。</summary>
     Task UpdateAsync(Follower follower, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 回填公开行的创建者凭证哈希（只动这一列）。
+    ///
+    /// **为什么要第二次写**：匿名公开行的凭证是按「访客密钥 + 本行 Id」派生的，
+    /// 而 Id 只有入库之后才存在——派生的输入之一就是它，写不出一次到位的插入。
+    /// 两次写之间的窗口里这一行两个 owner 列都是空，谁都不能从公开面删它（判据是
+    /// fail-closed 的）。所以进程真崩在中间，留下的是一条要管理员用工作台
+    /// <c>DELETE /api/followers/{id}</c> 清理的行，而不是一条谁都能删的行——
+    /// 两种坏里选这一个。
+    /// </summary>
+    Task SetOwnerCredentialAsync(
+        long id,
+        string ownerCredentialHash,
+        CancellationToken cancellationToken = default);
+
     Task DeleteAsync(long id, CancellationToken cancellationToken = default);
 }
 

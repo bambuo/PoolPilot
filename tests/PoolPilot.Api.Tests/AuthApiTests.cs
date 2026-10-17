@@ -242,8 +242,13 @@ public sealed class AuthApiTests
 ///   注意必须先 <c>RemoveAll</c>：<c>AddDbContext</c> 是"再加一条注册"，不删的话谁生效
 ///   取决于解析顺序，而这种"赌顺序"的测试早晚会静默地连错库。
 /// · 投递换成假实现：测试要拿到那串验证码才能走完注册，同时也不该真发邮件。
+///
+/// 不是 <c>sealed</c>：公开页那一组用例要在这两处之外再换掉上游（池客户端、盯市价、
+/// 运行期同步）并打开功能开关，那些改动写在
+/// <see cref="ConfigureTestServices"/> 的覆写里，而不是把整个工装抄一遍——
+/// 抄一遍的结局是两份工装对"临时库"这件事开始有不同行为。
 /// </summary>
-internal sealed class AuthTestApp : WebApplicationFactory<Program>
+internal class AuthTestApp : WebApplicationFactory<Program>
 {
     private readonly string _dbPath = Path.Combine(
         Path.GetTempPath(),
@@ -251,7 +256,7 @@ internal sealed class AuthTestApp : WebApplicationFactory<Program>
 
     public CapturingMailer Mailer { get; } = new();
 
-    /// <summary>直接打开那份临时库（测试用它做"确实落在临时库上"的守卫）。</summary>
+    /// <summary>直接打开那份临时库（测试用它做"确实落在临时库上"的守卫，以及播种/核对行数据）。</summary>
     public PoolPilotDbContext OpenDatabase() =>
         new(new DbContextOptionsBuilder<PoolPilotDbContext>()
             .UseSqlite($"Data Source={_dbPath}")
@@ -272,7 +277,14 @@ internal sealed class AuthTestApp : WebApplicationFactory<Program>
 
             services.RemoveAll<INotificationMailer>();
             services.AddSingleton<INotificationMailer>(Mailer);
+
+            ConfigureTestServices(services);
         });
+    }
+
+    /// <summary>子类追加服务替换的地方（默认什么都不换）。</summary>
+    protected virtual void ConfigureTestServices(IServiceCollection services)
+    {
     }
 
     protected override void Dispose(bool disposing)

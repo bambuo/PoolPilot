@@ -13,8 +13,11 @@
  * 概览类数字要短，明细类数字要准。
  */
 export function formatUsd(value: number, digits = 2): string {
-  const sign = value < 0 ? '-' : ''
   const abs = Math.abs(value)
+
+  // 负号只在**舍入之后仍然非零**时才画：未实现盈亏常常是 -0.003 这种量级，
+  // 按 2 位小数显示成 `-$0.00` 会让人以为"亏了钱"，而实际就是 0（页面实测抓到的）
+  const sign = value < 0 && Number(abs.toFixed(digits)) > 0 ? '-' : ''
 
   if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`
   if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`
@@ -63,6 +66,18 @@ export function formatDateTime(iso: string | null): string {
 
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '—' : date.toISOString().slice(0, 16).replace('T', ' ')
+}
+
+/** 按浏览器时区显示的**时刻**（HH:mm:ss）。用于"刚更新于"这类只关心今天几点的戳。 */
+export function formatLocalTime(iso: string | null): string {
+  if (!iso) return '—'
+
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+
+  const pad = (n: number): string => String(n).padStart(2, '0')
+
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 /**

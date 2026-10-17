@@ -25,12 +25,30 @@ namespace PoolPilot.Api.Tests;
 public sealed class AuthorizationCoverageTests
 {
     /// <summary>
-    /// 匿名或"登录即可"的端点。**只在这两类下允许**：
+    /// 匿名或"登录即可"的端点。**原本只有这两类**：
     /// <list type="bullet">
     ///   <item>匿名：登录本身（注册 / 登录 / MFA / 登出）、首次初始化，以及健康检查（非 MVC 端点，不在此表）。</item>
     ///   <item>登录即可：回答"我是谁 / 我能做什么 / 我看到哪些菜单"的自省类端点——它们不承载业务数据。</item>
     /// </list>
-    /// 任何**业务数据端点**都不该出现在这里；要放开，先想清楚"谁能读它"。
+    ///
+    /// ⚠️ **现在多了一类例外：公开面 <c>/api/public/*</c>（下表最后十条）。它们确实带业务数据。**
+    /// 这个例外成立的理由是产品形态本身：公开带单页与公开跟单页就是要给没账号的人看、
+    /// 并让人家不留身份就能建一份纸面跟单（见 docs/LEAD-FOLLOWERS.md 与这批的既定口径）。
+    /// 它们**不进菜单表、不挂 Casbin 权限点**——菜单与权限回答的是"工作台里的这个人能不能做这件事"，
+    /// 而这里根本没有"这个人"。
+    ///
+    /// 代价必须写清楚，否则下一个读代码的人会以为"任何业务数据端点都不该出现在这里"这条规矩被破坏了：
+    /// <list type="bullet">
+    ///   <item>输出面由**窄 DTO** 兜住而不是由权限兜住（<c>PublicPageDtos</c> + <c>PublicPageMapper</c>）：
+    ///     公开响应里没有交易所、实盘余额与持仓那一类字段；以后往私有 DTO 加字段不会自动 leak 到公开面。</item>
+    ///   <item>写面只有三个动作，且都不动别人的东西：W1 用 <c>Ensure</c>（不许改 <c>IsEnabled</c>，
+    ///     暂停是交易决策）、W2 只建纸面且要过数量上限、W3 只有创建者删得掉。</item>
+    ///   <item>三道闸门替权限挡在那里：功能开关（默认关，关掉回 404）、按来源地址的限流
+    ///     （<c>public-read</c> / <c>public-write</c>）、数量上限（<c>PublicPageLimits</c>，代码常量）。
+    ///     权限点在这里换不来任何保护：Casbin 的主体是"用户/角色"，而匿名访客不是主体。</item>
+    ///   <item>这些端点的**行为**由 <c>PublicPagesApiTests</c> 端到端钉住，不是靠这张白名单。</item>
+    /// </list>
+    /// 除这十条之外，任何业务数据端点仍然不该出现在这里；要放开，先想清楚"谁能读它"。
     /// </summary>
     private static readonly Dictionary<string, string> OpenEndpoints = new(StringComparer.Ordinal)
     {
@@ -50,6 +68,18 @@ public sealed class AuthorizationCoverageTests
         ["AuthController.Permissions"] = "登录即可：权限清单——它本身就是「我能做什么」的答案",
         ["MenusController.Tree"] = "登录即可：当前用户自己的菜单树；没有角色的账号拿到空树正是它该有的样子",
         ["RolesController.List"] = "登录即可：角色名展示（界面上到处要用），读不承载业务数据",
+
+        // ── 公开面 /api/public/*（匿名可达的业务数据端点，见类注释里的例外说明）──
+        ["PublicStatusController.Status"] = "匿名：公开面两页的开关状态——只回两个布尔，不读库、不打上游，两片都关时也必须能回答",
+        ["PublicLeadTradersController.List"] = "匿名：公开带单页的列表（G1）——窄 DTO，无 isEnabled、无交易所字段",
+        ["PublicLeadTradersController.Add"] = "匿名：观察这个池（W1）——Ensure 语义，不动 IsEnabled，过全站与当日数量上限",
+        ["PublicLeadTradersController.PoolOptions"] = "匿名：池名候选（G4）——只回 accountIndex+name+totalAssetValue，走 60 秒缓存的读口",
+        ["PublicFollowersController.List"] = "匿名：公开跟单页的列表（G2）——只含公开+纸面行，窄 DTO",
+        ["PublicFollowersController.Ownership"] = "匿名：当前调用者拥有的公开行 Id——只回答归属，不返回卡片数据、不装配估值",
+        ["PublicFollowersController.Get"] = "匿名：公开跟单详情（G3）——私有行与实盘行一律 404",
+        ["PublicFollowersController.Create"] = "匿名：建纸面跟单（W2）——归属两列之一落库，数量上限 + 限流兜着",
+        ["PublicFollowersController.Delete"] = "匿名：删自己建的公开跟单（W3）——只有创建者删得掉，判据见 PublicFollowerOwnership",
+        ["PublicStreamController.Stream"] = "匿名：公开页实时推送，匿名只读，受开关/并发上限/窄 DTO 约束",
     };
 
     [TestMethod]

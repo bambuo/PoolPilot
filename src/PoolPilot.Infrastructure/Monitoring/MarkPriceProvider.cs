@@ -16,6 +16,8 @@ namespace PoolPilot.Infrastructure.Monitoring;
 /// <list type="number">
 ///   <item>**缓存 60 秒**。盯市价是估值输入，不是成交依据；而一个跟单员可能持有十几个市场，
 ///     每个市场的盘口都要新建一次连接（实测约 0.75 秒），不缓存的话每次翻页都要重付这笔钱。
+///     **被实时行情频道覆盖的市场不走这个缓存**：<c>Update</c> 在每条 market_stats 帧到达时
+///     刷新缓存，后续 ResolveAsync 直接拿到最新价；REST 只服务没订阅频道的市场。
 ///     缓存**不与监控用的那份共享**：两边对"新鲜"的要求不同（监控要按盘口定价成交），
 ///     混在一起会让"成交必须最新"这条规则被估值的宽松需求悄悄放宽。</item>
 ///   <item>**并发上限 6**。全并发会在页面刷新时堆出十几条连接，既招限速也抢资源；
@@ -27,7 +29,7 @@ namespace PoolPilot.Infrastructure.Monitoring;
 /// </summary>
 public sealed class MarkPriceProvider(
     IServiceScopeFactory scopeFactory,
-    ILogger<MarkPriceProvider> logger) : IMarkPrices
+    ILogger<MarkPriceProvider> logger) : IMarkPrices, IMarkPriceSink
 {
     /// <summary>盘口缓存存活时间（秒）。</summary>
     private const int CacheSeconds = 60;
@@ -36,6 +38,13 @@ public sealed class MarkPriceProvider(
     private const int MaxParallel = 6;
 
     private readonly ConcurrentDictionary<int, (PriceAmount Mid, DateTimeOffset At)> _cache = [];
+
+    /// <summary>
+    /// 实时行情更新：market_stats 帧的值直接覆盖缓存。订阅了频道的市场从此不再等
+    /// 60 秒过期，也不会被 REST 的旧盘口覆盖——下一次估值读取到的就是这一帧的中间价。
+    /// </summary>
+    public void Update(int marketId, PriceAmount mid) =>
+        _cache[marketId] = (mid, DateTimeOffset.UtcNow);
 
     public async Task<MarkPrices> ResolveAsync(
         IReadOnlyList<int> marketIds,

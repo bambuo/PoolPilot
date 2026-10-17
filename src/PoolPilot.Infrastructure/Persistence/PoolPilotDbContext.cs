@@ -103,6 +103,10 @@ public sealed class PoolPilotDbContext(DbContextOptions<PoolPilotDbContext> opti
         // ── 跟单员 ──────────────────────────────────────────────
         // 自增主键：跟单员的身份**不借用池索引**——一个池可以挂多个跟单员，
         // 各投一份本金、各记一套账。用池索引当主键就写不出这种结构。
+        //
+        // 公开面那四列（IsPublic / OwnerUserId / OwnerCredentialHash / Label）刻意不给索引：
+        // 读它们的两条路径都是"整表读出来在内存里筛"，而行数被公开页自己的上限封在几百行以内。
+        // 为一次列表页加一条索引，代价是每次建表都要多一项要维护的东西，而这里换不来什么。
         modelBuilder.Entity<FollowerRecord>(entity =>
         {
             entity.ToTable("followers");
@@ -577,6 +581,23 @@ public sealed class FollowerRecord
 
     public long CreatedAtUtcTicks { get; set; }
 
+    // ── 公开面（/api/public/*）的四列 ──────────────────────────
+    // 全部可空。这不只是"这些信息可以没有"，也是**补列那一趟能跑得动**的前提：
+    // 给已有表加 NOT NULL 且无默认值的列，SQLite 会直接失败（见 DatabaseSchemaInitializer）。
+    // 老库里补出来的 NULL 在领域侧一律读成"工作台建的行"——非公开、没有创建者、没有名字。
+
+    /// <summary>是否出现在公开跟单页上。NULL 与 <c>false</c> 同义（都不公开）。</summary>
+    public bool? IsPublic { get; set; }
+
+    /// <summary>公开页 + 已登录建的行：创建者的会话用户 Id。</summary>
+    public long? OwnerUserId { get; set; }
+
+    /// <summary>公开页 + 匿名建的行：由访客密钥与本行 Id 派生的凭证哈希。访客密钥本身永不入库。</summary>
+    public string? OwnerCredentialHash { get; set; }
+
+    /// <summary>创建者起的名字。</summary>
+    public string? Label { get; set; }
+
     public DateTimeOffset CreatedAtUtc
     {
         get => new(CreatedAtUtcTicks, TimeSpan.Zero);
@@ -595,6 +616,10 @@ public sealed class FollowerRecord
             Mode = source.Mode.ToString(),
             ExchangeConfigId = source.ExchangeConfigId,
             IsActive = source.IsActive,
+            IsPublic = source.IsPublic,
+            OwnerUserId = source.OwnerUserId,
+            OwnerCredentialHash = source.OwnerCredentialHash,
+            Label = source.Label,
             CreatedAtUtc = source.CreatedAt.Utc,
         };
     }
@@ -610,6 +635,13 @@ public sealed class FollowerRecord
         Mode = Enum.TryParse(Mode, out CopyMode mode) ? mode : CopyMode.Paper,
         ExchangeConfigId = ExchangeConfigId,
         IsActive = IsActive,
+
+        // NULL 收口成 false：这一列的两种"没有"（老库补列前就存在的行、工作台建的行）
+        // 在判据上是同一件事——不公开。留成第三种状态只会让每个判据都要多写一个分支
+        IsPublic = IsPublic ?? false,
+        OwnerUserId = OwnerUserId,
+        OwnerCredentialHash = OwnerCredentialHash,
+        Label = Label,
         CreatedAt = LighterTimestamp.FromMilliseconds(CreatedAtUtc.ToUnixTimeMilliseconds()),
     };
 }

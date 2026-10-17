@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 using Microsoft.Extensions.Hosting;
@@ -42,6 +43,8 @@ public sealed class LeadTraderHostedService(
     LeadTraderRegistry registry,
     CopySlippageRecorder slippage,
     IMonitorBroadcaster broadcaster,
+    IMarkPriceSink markPrices,
+    IMarketPriceActivity marketPrices,
     IOptions<LeadTraderOptions> options,
     ILogger<LeadTraderHostedService> logger) : BackgroundService
 {
@@ -214,6 +217,14 @@ public sealed class LeadTraderHostedService(
         // 真正的上游数据帧才算一条消息；生命周期标记与保活帧不算
         _lastUpstreamMessageAt = DateTimeOffset.UtcNow;
 
+        // 实时行情（公开详情的标记价/未实现盈亏靠它，不再等 REST 缓存过期）
+        if (message.TryGetProperty("market_stats", out JsonElement marketStats)
+            && marketStats.ValueKind == JsonValueKind.Object)
+        {
+            HandleMarketStats(marketStats);
+            return;
+        }
+
         if (message.TryGetProperty("positions", out JsonElement positions) && positions.ValueKind == JsonValueKind.Object)
         {
             await HandlePositionUpdateAsync(message, cancellationToken).ConfigureAwait(false);
@@ -248,6 +259,49 @@ public sealed class LeadTraderHostedService(
         }
 
         await registry.ObserveAsync(account, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 一帧 <c>market_stats</c>：取中间价（缺失时退回标记价）写入估值缓存，并通知公开页。
+    /// 估值口径与原来的 REST 盘口中间价一致；交易/成交路径不走这里。
+    /// </summary>
+    private void HandleMarketStats(JsonElement stats)
+    {
+        if (!stats.TryGetProperty("market_id", out JsonElement idElement)
+            || idElement.ValueKind != JsonValueKind.Number
+            || !idElement.TryGetInt32(out int marketId))
+        {
+            return;
+        }
+
+        decimal? mid = ReadDecimal(stats, "mid_price") ?? ReadDecimal(stats, "mark_price");
+
+        if (mid is not > 0m)
+        {
+            return;
+        }
+
+        PriceAmount price = PriceAmount.From(mid.Value);
+        markPrices.Update(marketId, price);
+        marketPrices.NotifyMarketPriceChanged(marketId, price);
+    }
+
+    private static decimal? ReadDecimal(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out JsonElement value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out decimal number))
+        {
+            return number;
+        }
+
+        return value.ValueKind == JsonValueKind.String
+            && decimal.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out decimal text)
+                ? text
+                : null;
     }
 
     /// <summary>发布状态：先记住，再广播。心跳要重播同一份状态，所以状态必须留痕。</summary>

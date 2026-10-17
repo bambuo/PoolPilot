@@ -15,6 +15,23 @@ import { knownViewLoader } from '@/router/viewRegistry'
 /// 退出登录时会连同其它动态路由一起撤掉；那一刻按 name 跳转会直接报"没有这条路由"。
 export const HOME_PATH = '/graph'
 
+/// 匿名访客的进站落点：**公开带单页**。
+///
+/// 有了对外可读的那两页之后，"/" 再一律把人送去登录页就是错的：陌生人输入站点地址
+/// （或从别处点进来）看到的应该是一屏内容，而不是一堵要求注册 + MFA 的墙。
+/// 选带单页而不是跟单页：跟单页没人开过时是空的，第一屏什么都不说；带单页一进来就能
+/// 回答"这台机器在看哪些池"。要换只改这一个常量。
+export const PUBLIC_HOME_PATH = '/public/leads'
+
+/// 只有登录流程本身的那几页，才"不允许已登录的人停留"。
+///
+/// 判据以前是 meta.public——那是"这四页都没登录什么事"还成立时的写法。
+/// 公开带单/公开跟单同样是 meta.public（要走无导航的裸外壳），却是登录用户
+/// 也该能看的页面：继续沿用 meta.public 会造成"登录后一点公开页就被弹回总览"。
+/// 改成显式集合：新增公开页默认**不**被弹走，新增登录流程页要记得加进来。
+/// `mfa` 不在这里：那一刻会话刚签发、挑战还没用完（绑定同理），要把人留在本页走完。
+const AUTH_ONLY_ROUTE_NAMES: string[] = ['login', 'register', 'setup']
+
 /// 路由表。**只保留与权限无关的那些**：公开页、旧地址重定向、无权限页与兜底。
 ///
 /// 业务页面**不在这里**——它们由登录后的菜单树动态 `addRoute`（见 useMenu）。
@@ -24,8 +41,9 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     // ── 公开页（不需要登录）────────────────────────────────
-    // 这四页共用同一个"没有顶栏"的外壳，见 App.vue；`meta.public` 是唯一的判据，
-    // 路由守卫也读它——两处各写一份清单，早晚会有一处漏掉新页面。
+    // 这些页共用同一个"没有工作台外壳"的裸 RouterView（见 App.vue），`meta.public` 是
+    // 外壳的判据；但**守卫不把已登录用户一律踢开**——公开带单/公开跟单正是登录用户
+    // 也该看的页（"登录了不许停"只适用于下面 AUTH_ONLY_ROUTE_NAMES 那几个登录流程页）。
     { path: '/login', name: 'login', component: knownViewLoader('login'), meta: { public: true } },
     {
       path: '/register',
@@ -48,11 +66,32 @@ export const router = createRouter({
       component: knownViewLoader('mfa'),
       meta: { public: true },
     },
+    // 公开带单 / 公开跟单：匿名可达，登录用户也照样能看（这就是它们不在
+    // AUTH_ONLY_ROUTE_NAMES 里的原因）。**静态注册 + 直接懒加载**：它们不属于
+    // 按权限动态注册的那一组，不经 viewRegistry、也不让 useMenu 参与。
+    // `meta.showWhenNeedsSetup`：系统未初始化时守卫**不**把匿名访客送去 setup 页，
+    // 页面自己渲染"系统尚未就绪"（口径 11）——跳走等于把公开页藏进初始化之后。
+    {
+      path: '/public/leads',
+      name: 'public-leads',
+      component: () => import('@/views/PublicLeadListView.vue'),
+      meta: { public: true, showWhenNeedsSetup: true },
+    },
+    {
+      path: '/public/follows',
+      name: 'public-follows',
+      component: () => import('@/views/PublicFollowListView.vue'),
+      meta: { public: true, showWhenNeedsSetup: true },
+    },
     // 无权限 / 路径不存在的统一落点。**不是公开页**：它显示在工作台外壳里，
     // 未登录的人先被送去登录页，而不是从这一页反推出"站内有哪些地址"。
     { path: '/no-access', name: 'no-access', component: knownViewLoader('no-access') },
 
-    { path: '/', redirect: HOME_PATH },
+    // 进站根路径。**不能用 `redirect`**（和下面的兜底同一个理由）：redirect 在守卫之前就被
+    // 解析掉，那一刻还没问过 /me，"该去工作台还是该去公开页"根本无从判断——一律送去
+    // /graph 的结果是匿名访客在站点地址上看到一堵登录墙。改成挂个占位组件、由守卫在
+    // 知道"是谁"之后改写。
+    { path: '/', name: 'entry', component: knownViewLoader('no-access') },
 
     // 兜底：**未匹配到任何已注册路由**（含刷新深链、无权限路径）统一落无权限页。
     //
@@ -90,8 +129,22 @@ router.beforeEach(async (to) => {
 
   // 未初始化：一切入口先落在初始化页。已经登录的人不拦（他早就过了注册那一关，
   // 通道可以稍后在「通知 → 提供商」里配）；点了"跳过"的人也不拦（那是一条明确的选择）。
-  if (setup.needsSetup.value === true && !setup.skipped.value && user.value === null && to.name !== 'setup') {
+  // `showWhenNeedsSetup` 的公开页同样不拦：它们由页面自己渲染"系统尚未就绪"（口径 11），
+  // 把人跳去 setup 等于对匿名访客隐藏了"这里有一个公开页"这一事实。
+  if (
+    setup.needsSetup.value === true &&
+    !setup.skipped.value &&
+    user.value === null &&
+    to.name !== 'setup' &&
+    to.meta.showWhenNeedsSetup !== true
+  ) {
     return { name: 'setup' }
+  }
+
+  // 进站根路径：此刻已经问过"是谁"，才谈得上选落点。
+  // 已登录 → 工作台首页；匿名 → 公开带单页（不是登录墙，见 PUBLIC_HOME_PATH）。
+  if (to.name === 'entry') {
+    return { path: user.value === null ? PUBLIC_HOME_PATH : HOME_PATH, replace: true }
   }
 
   // 已初始化：初始化页不该还能进——它不是第二个配置入口
@@ -119,9 +172,9 @@ router.beforeEach(async (to) => {
     return { path: to.path, query: to.query, hash: to.hash, replace: true }
   }
 
-  if (isPublic && user.value !== null && to.name !== 'mfa') {
-    // 已登录的人不该停在登录/注册页；但 MFA 第二步例外——
-    // 那时会话刚签发、而挑战还没用完（绑定同理）
+  if (user.value !== null && typeof to.name === 'string' && AUTH_ONLY_ROUTE_NAMES.includes(to.name)) {
+    // 已登录的人不该停在登录/注册页（初始化页同理，那是登录之前的一步）。
+    // 判据是上面的显式集合而不是 meta.public——公开带单/公开跟单是登录用户也该能看的。
     return { path: HOME_PATH }
   }
 

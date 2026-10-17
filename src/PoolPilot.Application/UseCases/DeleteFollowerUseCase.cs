@@ -19,7 +19,14 @@ public sealed class DeleteFollowerUseCase(
     IFollowerLedgerRepository ledger,
     ILeadTraderSync sync)
 {
-    public async Task ExecuteAsync(long followerId, CancellationToken cancellationToken = default)
+    /// <param name="requestSync">
+    /// 是否在删除后喊一次运行期全量同步。默认 <c>true</c>（工作台路径不变）；
+    /// 公开面传 <c>false</c>——它自己会推一帧，匿名请求不该等一次全量重同步。
+    /// </param>
+    public async Task ExecuteAsync(
+        long followerId,
+        bool requestSync = true,
+        CancellationToken cancellationToken = default)
     {
         Follower? existing = await followers.GetAsync(followerId, cancellationToken).ConfigureAwait(false);
 
@@ -32,6 +39,9 @@ public sealed class DeleteFollowerUseCase(
         await followers.DeleteAsync(followerId, cancellationToken).ConfigureAwait(false);
 
         // 立刻摘掉订阅者（带单员本身继续观察——那条线不看跟单员的存在与否）
-        await sync.RequestSyncAsync(cancellationToken).ConfigureAwait(false);
+        if (requestSync)
+        {
+            await sync.RequestSyncAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 }
