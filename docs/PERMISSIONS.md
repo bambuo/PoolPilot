@@ -115,7 +115,29 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
 - 第一个账号绑上超管后会**立刻重建**一次策略；少了它，刚注册完的账号要等下一次写操作
   才真正拿到权限（表现为"什么都没改却进不去菜单管理"）。
 
-## 七、已经接入强制的接口
+## 七、数据隔离：权限之外的第二道边界
+
+权限决定"能进哪个页面"，数据归属决定"能看哪些行"。工作台目前把两类资源按用户隔离：
+
+| 资源 | 归属规则 |
+|---|---|
+| 跟单员（含流水、权益曲线、实盘流水） | 创建者私有；普通账号只列/读/改/删自己的，superadmin 可跨用户 |
+| 交易所配置（含凭据） | 创建者私有；普通账号只列/读/改/删/探测自己的，superadmin 可跨用户 |
+
+具体口径：
+
+- `followers.owner_user_id` 同时承载**工作台私有归属**与公开页登录创建者的归属；
+  工作台只列 `is_public = false` 的行，公开行即使创建者是当前用户也不混进来。
+- 按 Id 的私有端点先过归属守卫；不属于自己的行与不存在回同一个 404，不把 Id 变成探针。
+- 迁移前没有 owner 的老行只对 superadmin 可见——没有归属证据就不该默认分给某个人。
+  升级后确认归属再用 `UPDATE followers SET OwnerUserId=<用户 Id> WHERE ...` /
+  `UPDATE exchange_configs SET OwnerUserId=<用户 Id> WHERE ...` 回填；不替使用者猜。
+- **共享数据不隔离**：带单观察、池与行情、标的映射、通知配置、角色/用户/菜单。
+  带单列表上的跟随数：工作台按当前用户自己的跟单计数，公开页沿用全量计数。
+- 这不是加密，也不是数据库行级安全：能直接读 SQLite 文件的人仍然看得到全部数据；
+  隔离挡的是应用层不同登录账号之间的越权。
+
+## 八、已经接入强制的接口
 
 **后端强制现在是全量的**：除下面「白名单」一节列出的匿名与"登录即可"端点外，
 每个 MVC action 都挂了权限门。这条不靠人盯——有一条**覆盖门禁测试**兜底（见后文）。
@@ -150,6 +172,8 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
 - **「池列表」**（`menu:pools`）：`GET /api/pools`、`GET /api/pools/{accountIndex}`（均 `view`）。
 - **「带单管理」**（`menu:leads`）：`GET /api/lead-traders`、`GET /api/lead-traders/{accountIndex}`（`view`）；
   `PUT /api/lead-traders/{accountIndex}`（`edit`）；`DELETE /api/lead-traders/{accountIndex}`（`delete`）。
+  **暂停/恢复/停止是共享观察对象的管理动作，只许 superadmin**：拥有 edit/delete 的普通角色
+  新建观察仍然可以，但改开关与删除会被用例拒绝（菜单权限之外的第二道判定）。
 - **「跟单管理」**（`menu:copy-list`）：`GET /api/followers`、`GET /api/followers/{id}`、
   `GET /api/followers/{id}/live-account`、`GET /api/followers/{id}/live-orders`（`view`）；
   `POST /api/followers`、`PUT /api/followers/{id}`、`POST /api/followers/{id}/live-positions/close`

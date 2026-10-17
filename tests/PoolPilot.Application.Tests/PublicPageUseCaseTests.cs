@@ -92,15 +92,15 @@ public sealed class PublicPageUseCaseTests
     }
 
     [TestMethod]
-    public async Task CreatePublic_LeavesTheWorkbenchRowShapeUntouched()
+    public async Task CreatePrivate_SetsOwnerAndLeavesPublicColumnsEmpty()
     {
-        // 三种形状里的「工作台建的行」由私有用例负责。这里钉住它没被顺带改动：
-        // 私有用例建出来的行仍然 is_public=false、两个 owner 列与 label 都是 null
+        // 工作台私有的行：is_public=false，owner 记当前用户；公开面的凭证与标签保持 null。
+        // 公开页建的行是另一套形状（is_public=true + 两种 owner 之一），两条路不能混淆。
         FakeFollowers followers = new();
         FakeLeads leads = SeededLeads();
 
         CreateFollowerUseCase privateCreate = new(
-            followers, leads, new FakeExchanges(), new FakeBrokerFactory(), new LiveTradingLimits(), sync);
+            followers, leads, new FakeExchanges(), new FakeBrokerFactory(), new LiveTradingLimits(), new FakeSync(), Scope());
 
         await privateCreate.ExecuteAsync(
             new CreateFollowerRequest { LeadAccountIndex = Pool.Value, InitialCapital = 500m },
@@ -108,9 +108,9 @@ public sealed class PublicPageUseCaseTests
 
         Follower stored = followers.Last!;
         Assert.IsFalse(stored.IsPublic);
-        Assert.IsNull(stored.OwnerUserId);
-        Assert.IsNull(stored.OwnerCredentialHash);
-        Assert.IsNull(stored.Label);
+        Assert.AreEqual(1L, stored.OwnerUserId, "工作台私有行必须记住创建者");
+        Assert.IsNull(stored.OwnerCredentialHash, "访客凭证只属于公开面");
+        Assert.IsNull(stored.Label, "公开页标签只属于公开面");
     }
 
     // ── W2：字段口径 ──────────────────────────────────────
@@ -499,10 +499,15 @@ public sealed class PublicPageUseCaseTests
         FakeLeads leads = SeededLeads();
         await followers.CreateAsync(PublicRow(1L), CancellationToken.None);
 
+        // 工作台只列私有行：同一个账户形状另放一条私有行，两边仍走同一份装配比较
+        await followers.CreateAsync(
+            PrivateRow(2L) with { OwnerUserId = 1L },
+            CancellationToken.None);
+
         IReadOnlyList<PublicFollowerSummaryDto> publicList = await ListPublic(followers, leads);
         IReadOnlyList<FollowerSummaryDto> workbench = await new ListFollowersUseCase(
             followers, leads, BuildReadUseCase(followers, leads, new FakeLedger()),
-            BuildLiveAccount(followers), new FakeLiveOrders()).ExecuteAsync(CancellationToken.None);
+            BuildLiveAccount(followers), new FakeLiveOrders(), Scope()).ExecuteAsync(CancellationToken.None);
 
         Assert.AreEqual(workbench[0].Equity, publicList[0].Equity);
         Assert.AreEqual(workbench[0].ReturnPercent, publicList[0].ReturnPercent);
@@ -523,7 +528,9 @@ public sealed class PublicPageUseCaseTests
         FakeFollowers followers = new();
         FakeLeads leads = SeededLeads();
         FakeLedger ledger = new();
-        await followers.CreateAsync(PublicRow(1L), CancellationToken.None);
+        await followers.CreateAsync(
+            PrivateRow(1L) with { OwnerUserId = 1L },
+            CancellationToken.None);
 
         // 三个市场各一笔建仓 → 三笔非零仓位
         for (int index = 0; index < 3; index++)
@@ -536,10 +543,87 @@ public sealed class PublicPageUseCaseTests
             leads,
             BuildReadUseCase(followers, leads, ledger),
             BuildLiveAccount(followers),
-            new FakeLiveOrders()).ExecuteAsync(CancellationToken.None);
+            new FakeLiveOrders(),
+            Scope()).ExecuteAsync(CancellationToken.None);
 
         Assert.AreEqual(3, summaries[0].Positions.Count, "一行都不该在服务端被裁掉");
     }
+
+    [TestMethod]
+    public async Task Workbench_OnlyShowsOwnedPrivateRows()
+    {
+        FakeFollowers followers = new();
+        FakeLeads leads = SeededLeads();
+
+        await followers.CreateAsync(PrivateRow(1L) with { OwnerUserId = 1L }, CancellationToken.None);
+        await followers.CreateAsync(PrivateRow(2L) with { OwnerUserId = 2L }, CancellationToken.None);
+        await followers.CreateAsync(PublicRow(3L) with { OwnerUserId = 1L }, CancellationToken.None);
+
+        IReadOnlyList<FollowerSummaryDto> mine = await Workbench(followers, leads, Scope(userId: 1L));
+
+        Assert.HasCount(1, mine, "公开行不进入工作台；别人的私有行也不该出现");
+        Assert.AreEqual(1L, mine[0].Id);
+    }
+
+    [TestMethod]
+    public async Task Workbench_SuperadminSeesAllPrivateRowsButNotPublicOnes()
+    {
+        FakeFollowers followers = new();
+        FakeLeads leads = SeededLeads();
+
+        await followers.CreateAsync(PrivateRow(1L) with { OwnerUserId = 1L }, CancellationToken.None);
+        await followers.CreateAsync(PrivateRow(2L) with { OwnerUserId = 2L }, CancellationToken.None);
+        await followers.CreateAsync(PublicRow(3L) with { OwnerUserId = 1L }, CancellationToken.None);
+
+        IReadOnlyList<FollowerSummaryDto> all = await Workbench(followers, leads, Scope(all: true));
+
+        CollectionAssert.AreEquivalent(
+            new List<long> { 1L, 2L },
+            all.Select(row => row.Id).ToList(),
+            "superadmin 跨用户看全部私有行；公开行仍留给公开广场");
+    }
+
+    [TestMethod]
+    public async Task LeadList_ScopesFollowerCounts_ButPublicUsesAllRows()
+    {
+        FakeLeads leads = SeededLeads();
+        FakeFollowers followers = new();
+
+        await followers.CreateAsync(PrivateRow(1L) with { OwnerUserId = 1L }, CancellationToken.None);
+        await followers.CreateAsync(PrivateRow(2L) with { OwnerUserId = 2L }, CancellationToken.None);
+        await followers.CreateAsync(PublicRow(3L) with { OwnerUserId = 1L }, CancellationToken.None);
+
+        LeadTraderDto mine = Assert.ContainsSingle(
+            await new ListLeadTradersUseCase(leads, followers, new FakeEvents(), new FakeWatchState(), Scope())
+                .ExecuteAsync(CancellationToken.None));
+
+        Assert.AreEqual(1, mine.FollowerCount, "普通账号只该看到自己的跟单数");
+        Assert.AreEqual(1, mine.ActiveFollowerCount);
+
+        LeadTraderDto admin = Assert.ContainsSingle(
+            await new ListLeadTradersUseCase(leads, followers, new FakeEvents(), new FakeWatchState(), Scope(all: true))
+                .ExecuteAsync(CancellationToken.None));
+
+        Assert.AreEqual(2, admin.FollowerCount, "superadmin 的计数包含所有私有行，但不含公开行");
+
+        LeadTraderDto publicLead = Assert.ContainsSingle(
+            await new ListLeadTradersUseCase(leads, followers, new FakeEvents(), new FakeWatchState(), Scope())
+                .ExecutePublicAsync(CancellationToken.None));
+
+        Assert.AreEqual(3, publicLead.FollowerCount, "公开页沿用全量计数（本来就是公开广场的口径）");
+    }
+
+    private static Task<IReadOnlyList<FollowerSummaryDto>> Workbench(
+        FakeFollowers followers,
+        FakeLeads leads,
+        FakeUserDataScope scope) =>
+        new ListFollowersUseCase(
+            followers,
+            leads,
+            BuildReadUseCase(followers, leads, new FakeLedger()),
+            BuildLiveAccount(followers),
+            new FakeLiveOrders(),
+            scope).ExecuteAsync(CancellationToken.None);
 
     [TestMethod]
     public async Task GetPublic_PrivateRowLiveRowAndMissingRow_AreAllFortyFour()
@@ -848,7 +932,7 @@ public sealed class PublicPageUseCaseTests
     private static AddPublicLeadTraderUseCase BuildAddUseCase(FakeLeads leads, FakeFollowers followers) => new(
         leads,
         new EnsureLeadTraderUseCase(leads, new FakePoolsClient()),
-        new ListLeadTradersUseCase(leads, followers, new FakeEvents(), new FakeWatchState()),
+        new ListLeadTradersUseCase(leads, followers, new FakeEvents(), new FakeWatchState(), Scope(all: true)),
         new PublicLeadTraderQuota(leads, Clock));
 
     private static GetPublicFollowerUseCase BuildGetUseCase(FakeFollowers followers, FakeLeads leads, FakeLedger? ledger = null) =>
@@ -880,10 +964,14 @@ public sealed class PublicPageUseCaseTests
                 leads,
                 BuildReadUseCase(followers, leads, new FakeLedger()),
                 BuildLiveAccount(followers),
-                new FakeLiveOrders()));
+                new FakeLiveOrders(),
+                Scope()));
 
         return await useCase.ExecuteAsync(caller ?? Caller(userId: null, VisitorSecret), CancellationToken.None);
     }
+
+    private static FakeUserDataScope Scope(long userId = 1L, bool all = false) =>
+        new() { UserId = userId, CanSeeAll = all };
 
     private static FakeLeads SeededLeads()
     {

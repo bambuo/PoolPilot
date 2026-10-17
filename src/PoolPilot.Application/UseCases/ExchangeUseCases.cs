@@ -7,17 +7,22 @@ using PoolPilot.Domain.ValueObjects;
 
 namespace PoolPilot.Application.UseCases;
 
-/// <summary>列出全部交易所配置。凭据只以尾号出现在结果里，明文与密文都不出口。</summary>
+/// <summary>列出当前用户可见的交易所配置。凭据只以尾号出现在结果里，明文与密文都不出口。</summary>
 public sealed class ListExchangesUseCase(
     IExchangeConfigRepository exchanges,
-    IExchangeSymbolCatalogFactory catalogs)
+    IExchangeSymbolCatalogFactory catalogs,
+    IUserDataScope scope)
 {
     public async Task<IReadOnlyList<ExchangeConfigDto>> ExecuteAsync(
         CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<ExchangeConfig> rows = await exchanges
-            .ListAsync(cancellationToken)
-            .ConfigureAwait(false);
+        long? owner = await scope.OwnerFilterAsync(cancellationToken).ConfigureAwait(false);
+
+        IReadOnlyList<ExchangeConfig> rows =
+        [
+            .. (await exchanges.ListAsync(cancellationToken).ConfigureAwait(false))
+                .Where(row => owner is null || row.OwnerUserId == owner),
+        ];
 
         // 顺带把"这个平台有没有合约目录"问一遍：界面靠它决定按钮可不可点。
         // 问工厂而不是猜平台名——将来给别的平台加了目录，这里自动跟着变
@@ -38,7 +43,8 @@ public sealed class ListExchangesUseCase(
 /// </summary>
 public sealed class CreateExchangeUseCase(
     IExchangeConfigRepository exchanges,
-    IExchangeSymbolCatalogFactory catalogs)
+    IExchangeSymbolCatalogFactory catalogs,
+    IUserDataScope scope)
 {
     public async Task<ExchangeConfigDto> ExecuteAsync(
         CreateExchangeRequest request,
@@ -58,6 +64,7 @@ public sealed class CreateExchangeUseCase(
         ExchangeConfig created = await exchanges.CreateAsync(
             new ExchangeConfig
             {
+                OwnerUserId = scope.UserId,
                 Code = ExchangeEnumText.ParseCode(request.Code),
                 Kind = ExchangeEnumText.ParseKind(request.Kind),
                 DisplayName = name,

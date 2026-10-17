@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.Dtos;
+using PoolPilot.Application.Services;
 using PoolPilot.Application.UseCases;
 using PoolPilot.Domain.Constants;
 
@@ -36,8 +37,17 @@ public sealed class FollowersController(
     GetLiveOrdersUseCase liveOrders,
     GetLiveAccountUseCase liveAccount,
     CloseLivePositionUseCase closePosition,
+    FollowerAccessGuard access,
     IFollowerLiveBroadcaster followerLive) : ControllerBase
 {
+    /// <summary>
+    /// 当前用户能不能读写这个跟单员。公开行一律不可访问（它们属于公开广场）；
+    /// 普通账号只认自己创建的，superadmin 可跨用户。
+    /// </summary>
+    private async Task<bool> CanAccessAsync(long id, CancellationToken cancellationToken) =>
+        await access.FindAsync(id, cancellationToken).ConfigureAwait(false) is not null;
+
+    private NotFoundObjectResult Missing(long id) => NotFound(new { error = $"跟单员 {id} 不存在。" });
     /// <summary>全部跟单员的卡片摘要（不带流水与曲线）。</summary>
     [HttpGet]
     [RequirePermission(PermissionKeys.CopyList, MenuActions.View)]
@@ -55,8 +65,15 @@ public sealed class FollowersController(
     [RequirePermission(PermissionKeys.CopyList, MenuActions.View)]
     public async Task<ActionResult<LiveAccountDto>> LiveAccount(
         long id,
-        CancellationToken cancellationToken = default) =>
-        Ok(await liveAccount.ExecuteAsync(id, cancellationToken).ConfigureAwait(false));
+        CancellationToken cancellationToken = default)
+    {
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
+        return Ok(await liveAccount.ExecuteAsync(id, cancellationToken).ConfigureAwait(false));
+    }
 
     /// <summary>
     /// **手动平掉**实盘账户上的一笔仓位（真实下单）。
@@ -74,6 +91,11 @@ public sealed class FollowersController(
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
         return Ok(await closePosition.ExecuteAsync(id, request, cancellationToken).ConfigureAwait(false));
     }
 
@@ -89,19 +111,29 @@ public sealed class FollowersController(
     public async Task<ActionResult<IReadOnlyList<LiveOrderDto>>> LiveOrders(
         long id,
         [FromQuery] int limit = 200,
-        CancellationToken cancellationToken = default) =>
-        Ok(await liveOrders.ExecuteAsync(id, limit, cancellationToken).ConfigureAwait(false));
+        CancellationToken cancellationToken = default)
+    {
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
+        return Ok(await liveOrders.ExecuteAsync(id, limit, cancellationToken).ConfigureAwait(false));
+    }
 
     /// <summary>读取跟单员状态。不存在时返回 404，让界面区分"没有这个跟单员"与"有但没成交"。</summary>
     [HttpGet("{id:long}")]
     [RequirePermission(PermissionKeys.CopyList, MenuActions.View)]
     public async Task<ActionResult<FollowerDto>> Get(long id, CancellationToken cancellationToken = default)
     {
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
         FollowerDto? follower = await get.ExecuteAsync(id, cancellationToken).ConfigureAwait(false);
 
-        return follower is null
-            ? NotFound(new { error = $"跟单员 {id} 不存在。" })
-            : Ok(follower);
+        return follower is null ? Missing(id) : Ok(follower);
     }
 
     /// <summary>
@@ -133,6 +165,11 @@ public sealed class FollowersController(
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
         FollowerDto follower = await update.ExecuteAsync(id, request, cancellationToken).ConfigureAwait(false);
         await followerLive.BroadcastFollowerChangedAsync(id, cancellationToken).ConfigureAwait(false);
 
@@ -144,6 +181,11 @@ public sealed class FollowersController(
     [RequirePermission(PermissionKeys.CopyList, MenuActions.Delete)]
     public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken = default)
     {
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
         await delete.ExecuteAsync(id, cancellationToken: cancellationToken).ConfigureAwait(false);
         await followerLive.BroadcastFollowerChangedAsync(id, cancellationToken).ConfigureAwait(false);
 

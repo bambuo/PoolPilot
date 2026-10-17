@@ -108,6 +108,13 @@ sudo systemctl start poolpilot
 
 升级/重装包不会覆盖 `/var/lib/poolpilot`，也不会覆盖 `/etc/default/poolpilot` 的本地修改。
 
+> **从"全局共享"版本升级到按用户隔离的版本**：已有的跟单员与交易所配置
+> `OwnerUserId` 为空，只对 superadmin 可见。确认归属后，在停服前或升级后用 SQL 回填
+> （库在 `/var/lib/poolpilot/poolpilot.db`）：
+> `UPDATE followers SET OwnerUserId=<用户 Id> WHERE COALESCE(IsPublic,0)=0 AND OwnerUserId IS NULL;`
+> `UPDATE exchange_configs SET OwnerUserId=<用户 Id> WHERE OwnerUserId IS NULL;`
+> 公开页的行（`IsPublic=1`）不要回填成私有归属。
+
 ## 五、升级与卸载
 
 ```bash

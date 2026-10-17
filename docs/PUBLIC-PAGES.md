@@ -124,7 +124,7 @@ Casbin 的主体是"用户 / 角色"，而匿名访客不是主体——给他�
 ## 五、实时：一条匿名 SSE，零轮询
 
 公开页**不接 SignalR**。`/hubs/monitor` 要求登录且要求 `menu:graph` 的 `view` 才准入
-（见 [PERMISSIONS.md](PERMISSIONS.md) 第七节），为一个留言板放开匿名订阅通道，
+（见 [PERMISSIONS.md](PERMISSIONS.md) 第八节），为一个留言板放开匿名订阅通道，
 等于把全量广播送给没有身份的连接。公开页改为一条匿名 SSE：
 
 ```

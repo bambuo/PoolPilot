@@ -9,9 +9,11 @@ namespace PoolPilot.Application.UseCases;
 /// <summary>
 /// 创建、启停与停止带单员。
 ///
-/// 三条规则：
+/// 四条规则：
 /// <list type="bullet">
 ///   <item>**创建即观察**：没有"建了但先不观察"的中间态，那只会让页面出现一个什么都不做的条目。</item>
+///   <item>**共享观察只有管理员能暂停/恢复/停止**：带单员是全局观察对象，
+///     一个普通账号把它关掉会影响所有跟单员；创建新观察不受这条限制。</item>
 ///   <item>**暂停不动作**：暂停只停止产生新信号，跟单员的仓位一律不动。
 ///     平仓是交易决策——替使用者平掉是拿他的钱做一个他没做的决定。</item>
 ///   <item>**有订阅者不许停止**：删掉观察者而把订阅者留在原地，会造出
@@ -23,7 +25,8 @@ public sealed class ConfigureLeadTraderUseCase(
     IFollowerRepository followers,
     EnsureLeadTraderUseCase ensure,
     ListLeadTradersUseCase list,
-    ILeadTraderSync sync)
+    ILeadTraderSync sync,
+    IUserDataScope scope)
 {
     public async Task<LeadTraderDto> ExecuteAsync(
         AccountIndex pool,
@@ -32,6 +35,18 @@ public sealed class ConfigureLeadTraderUseCase(
     {
         ArgumentNullException.ThrowIfNull(pool);
         ArgumentNullException.ThrowIfNull(request);
+
+        LeadTrader? existing = await leads.GetAsync(pool, cancellationToken).ConfigureAwait(false);
+
+        // 只有"改共享开关"这一步需要管理员；新建观察或原样提交不受影响。
+        if (existing is not null
+            && existing.IsEnabled != request.IsEnabled
+            && !await scope.CanSeeAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new ArgumentException(
+                "共享的带单员只有管理员可以暂停或恢复观察。",
+                nameof(request));
+        }
 
         LeadTrader lead = await ensure
             .ExecuteAsync(pool, request.IsEnabled, cancellationToken)
@@ -52,6 +67,13 @@ public sealed class ConfigureLeadTraderUseCase(
     public async Task DeleteAsync(AccountIndex pool, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(pool);
+
+        if (!await scope.CanSeeAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new ArgumentException(
+                "共享的带单员只有管理员可以停止观察。",
+                nameof(pool));
+        }
 
         IReadOnlyList<Follower> subscribers = await followers
             .ListByLeadAsync(pool, cancellationToken)

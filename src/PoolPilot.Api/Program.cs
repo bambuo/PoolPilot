@@ -8,6 +8,7 @@ using PoolPilot.Api.Middleware;
 using PoolPilot.Api.RateLimiting;
 using PoolPilot.Api.Streaming;
 using PoolPilot.Application.Abstractions;
+using PoolPilot.Application.Services;
 using PoolPilot.Application.UseCases;
 using PoolPilot.Domain.Constants;
 using PoolPilot.Domain.Repositories;
@@ -145,6 +146,11 @@ public sealed class Program
         // "当前是谁"的实现放在表现层（它认识 Cookie 声明），应用层只认 ICurrentUser
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
+
+        // 工作台私有数据的作用域与归属守卫：权限决定"能进哪个页面"，这里决定"能看哪些行"
+        builder.Services.AddScoped<IUserDataScope, UserDataScope>();
+        builder.Services.AddScoped<FollowerAccessGuard>();
+        builder.Services.AddScoped<ExchangeAccessGuard>();
 
         // 通知：通道 / 样板 / 记录。口令与交易所凭据同一条约定（明文，见 EXCHANGES.md）
         builder.Services.AddScoped<INotificationProviderRepository, NotificationProviderRepository>();

@@ -59,7 +59,7 @@ public sealed class GetPublicLeadTraderDetailUseCase(
 
         try
         {
-            leadDto = await leadList.ExecuteAsync(pool, cancellationToken).ConfigureAwait(false);
+            leadDto = await leadList.ExecutePublicAsync(pool, cancellationToken).ConfigureAwait(false);
         }
         catch (ArgumentException)
         {

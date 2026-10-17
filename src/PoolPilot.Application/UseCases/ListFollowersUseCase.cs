@@ -1,3 +1,4 @@
+using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.Mapping;
 using PoolPilot.Domain.Entities;
@@ -21,12 +22,22 @@ public sealed class ListFollowersUseCase(
     ILeadTraderRepository leads,
     GetFollowerUseCase getFollower,
     GetLiveAccountUseCase getLiveAccount,
-    ILiveOrderRepository liveOrders)
+    ILiveOrderRepository liveOrders,
+    IUserDataScope scope)
 {
     public async Task<IReadOnlyList<FollowerSummaryDto>> ExecuteAsync(
         CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<Follower> configured = await followers.ListAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<Follower> all = await followers.ListAsync(cancellationToken).ConfigureAwait(false);
+        long? owner = await scope.OwnerFilterAsync(cancellationToken).ConfigureAwait(false);
+
+        // 工作台只列私有行：公开页创建的行属于公开广场，即使创建者是当前用户也不混进来。
+        // 普通账号再按 owner 过滤；superadmin 的 owner 为 null，看到全部私有行。
+        IReadOnlyList<Follower> configured =
+        [
+            .. all.Where(follower => !follower.IsPublic
+                && (owner is null || follower.OwnerUserId == owner)),
+        ];
 
         return await ExecuteAsync(configured, cancellationToken).ConfigureAwait(false);
     }

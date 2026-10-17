@@ -75,6 +75,8 @@ public interface IFollower
 ## 7. 边界与已知限制
 
 - **一个跟单员只订阅一个带单员**。多源合成需要冲突消解规则（两个带单员给出相反信号时听谁的），不在范围内。
+- **共享观察只有管理员能停/启**：带单员是全局观察对象，普通账号有 edit/delete 也只能新建观察，
+  不能暂停、恢复或停止——否则一个人会把所有人的信号源关掉。
 - **暂停带单员不自动平仓**：暂停只停止产生新信号，跟单员的仓位保持不动。平仓是交易决策，必须由人做。
 - **停止带单员前必须先清空订阅者**：删掉观察者而把订阅者留在原地，会造出"看着在跟随、其实永远收不到信号"的状态，而界面上它跟正常运行一模一样。
 - **退订帧未验证**：WS 协议里没有实测过退订帧，所以暂停的池只是"不再处理它的帧"，频道仍连着。宁可多收几帧，也不猜协议。
@@ -85,7 +87,7 @@ public interface IFollower
 | 表 | 主键 | 说明 |
 |---|---|---|
 | `lead_traders` | 池账户索引 | 存在即被观察。池名在此落一份快照（池改名/下线后历史仍可读） |
-| `followers` | 自增 Id | 订阅的带单员、本金、模式、启用状态；另有 `is_public` / `owner_user_id` / `owner_credential_hash` / `label` 四条可空列服务公开页（工作台建的行四条都留空，见 [PUBLIC-PAGES.md](PUBLIC-PAGES.md)） |
+| `followers` | 自增 Id | 订阅的带单员、本金、模式、启用状态；`owner_user_id` 是**工作台私有归属**（普通账号只看自己的），公开页的行另用 `is_public` + `owner_user_id`/`owner_credential_hash` 表示创建者，`label` 只服务公开页 |
 | `follower_fills` | 自增 Id | 该跟单员的动作流水（成交 + 跳过），键是 `follower_id`；`InitialMarginPercent` 记成交时源池的保证金率（旧行为空） |
 | `follower_equity_points` | 自增 Id | 盯市权益点 |
 | `pool_events` / `copy_fills` | 自增 Id | **池子级**的观测产物，键仍是池索引——它们记录的是池子发生了什么，与谁在跟无关 |

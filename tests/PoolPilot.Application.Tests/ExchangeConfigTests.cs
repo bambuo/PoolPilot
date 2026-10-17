@@ -32,7 +32,7 @@ public sealed class ExchangeConfigTests
     {
         // 先登记平台、稍后再贴凭据是正常流程：接口地址与费率本身就有价值
         FakeRepository repo = new();
-        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory(), Scope());
 
         ExchangeConfigDto dto = await useCase.ExecuteAsync(new CreateExchangeRequest
         {
@@ -48,13 +48,58 @@ public sealed class ExchangeConfigTests
         Assert.IsNull(dto.ApiKeyHint);
         Assert.AreEqual("binance", dto.Code);
         Assert.AreEqual(1, repo.Rows.Count);
+        Assert.AreEqual(1L, repo.Rows.Single().OwnerUserId, "新配置归创建者所有");
+    }
+
+    [TestMethod]
+    public async Task List_OnlyReturnsCurrentUsersConfigs_AndAdminSeesAll()
+    {
+        FakeRepository repo = new();
+        repo.Rows.Add(new ExchangeConfig
+        {
+            Id = 1,
+            OwnerUserId = 1,
+            Code = ExchangeCode.Binance,
+            Kind = ExchangeKind.Cex,
+            DisplayName = "我的",
+            IsTestnet = false,
+            MakerFeePercent = 0m,
+            TakerFeePercent = 0m,
+            IsEnabled = true,
+            CreatedAt = LighterTimestamp.FromMilliseconds(0),
+        });
+        repo.Rows.Add(new ExchangeConfig
+        {
+            Id = 2,
+            OwnerUserId = 2,
+            Code = ExchangeCode.Okx,
+            Kind = ExchangeKind.Cex,
+            DisplayName = "别人的",
+            IsTestnet = false,
+            MakerFeePercent = 0m,
+            TakerFeePercent = 0m,
+            IsEnabled = true,
+            CreatedAt = LighterTimestamp.FromMilliseconds(0),
+        });
+
+        IReadOnlyList<ExchangeConfigDto> mine = await new ListExchangesUseCase(
+            repo, new FakeCatalogFactory(), Scope()).ExecuteAsync(CancellationToken.None);
+
+        Assert.HasCount(1, mine);
+        Assert.AreEqual("我的", mine[0].DisplayName);
+
+        IReadOnlyList<ExchangeConfigDto> all = await new ListExchangesUseCase(
+            repo, new FakeCatalogFactory(), new FakeUserDataScope { UserId = 1, CanSeeAll = true })
+            .ExecuteAsync(CancellationToken.None);
+
+        Assert.HasCount(2, all, "superadmin 保留全局视图");
     }
 
     [TestMethod]
     public async Task Create_WithCredentials_StoresThemAsGivenAndExposesOnlyTheHint()
     {
         FakeRepository repo = new();
-        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory(), Scope());
 
         ExchangeConfigDto dto = await useCase.ExecuteAsync(new CreateExchangeRequest
         {
@@ -81,7 +126,7 @@ public sealed class ExchangeConfigTests
         // 最笨也最可靠的检查：把 DTO 整个序列化，明文不该出现在里面。
         // 将来谁给 DTO 加了个字段把凭据带出来，这条会立刻失败。
         FakeRepository repo = new();
-        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory(), Scope());
 
         ExchangeConfigDto dto = await useCase.ExecuteAsync(new CreateExchangeRequest
         {
@@ -105,7 +150,7 @@ public sealed class ExchangeConfigTests
     public async Task Create_WithOnlyKeyOrOnlySecret_IsRejected()
     {
         FakeRepository repo = new();
-        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory(), Scope());
 
         foreach (CreateExchangeRequest request in new[]
         {
@@ -127,7 +172,7 @@ public sealed class ExchangeConfigTests
     {
         // 空白（或空串）不该留下一串空字符串：空字符串会让"没配"这件事在库里看不出来
         FakeRepository repo = new();
-        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory(), Scope());
 
         await useCase.ExecuteAsync(new CreateExchangeRequest
         {
@@ -151,7 +196,7 @@ public sealed class ExchangeConfigTests
         // 三态是本用例的核心语义：不传 = 保持、空串 = 清除、有值 = 换新。
         // 少了"清除"这一态，贴错的 key 就永远删不掉。
         FakeRepository repo = new();
-        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory(), Scope());
         UpdateExchangeUseCase update = new(repo, new FakeCatalogFactory());
 
         ExchangeConfigDto created = await create.ExecuteAsync(new CreateExchangeRequest
@@ -204,7 +249,7 @@ public sealed class ExchangeConfigTests
         // 界面靠这个标记决定"扫描/登记"按钮可不可点，而不是让人点一下再吃错误。
         // 判据来自工厂而不是猜平台名——将来给别的平台加了目录，这里自动跟着变
         FakeRepository repo = new();
-        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory(), Scope());
 
         ExchangeConfigDto binance = await create.ExecuteAsync(
             new CreateExchangeRequest { Code = "binance", Kind = "cex", DisplayName = "币安" },
@@ -225,7 +270,7 @@ public sealed class ExchangeConfigTests
         // 也拿不回来。若"不传"被当成"清空"，保存一次改动就会把已存的地址抹掉——
         // 这种数据丢失在界面上完全看不出来，只有将来接实盘时才会以"地址为空"暴露。
         FakeRepository repo = new();
-        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory(), Scope());
         UpdateExchangeUseCase update = new(repo, new FakeCatalogFactory());
 
         ExchangeConfigDto created = await create.ExecuteAsync(new CreateExchangeRequest
@@ -259,7 +304,7 @@ public sealed class ExchangeConfigTests
         // 接口地址不该发到前端：界面不显示也不许改，前端拿不到，也就不会有人想着去改它。
         // 把它从 DTO 里整个去掉，比"前端拿到了但不渲染"更彻底。
         FakeRepository repo = new();
-        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory(), Scope());
 
         ExchangeConfigDto dto = await create.ExecuteAsync(new CreateExchangeRequest
         {
@@ -281,7 +326,7 @@ public sealed class ExchangeConfigTests
     public async Task Update_WithOnlyOneCredentialField_IsRejected()
     {
         FakeRepository repo = new();
-        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase create = new(repo, new FakeCatalogFactory(), Scope());
         UpdateExchangeUseCase update = new(repo, new FakeCatalogFactory());
 
         ExchangeConfigDto created = await create.ExecuteAsync(new CreateExchangeRequest
@@ -306,7 +351,7 @@ public sealed class ExchangeConfigTests
         FakeRepository repo = new();
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            new CreateExchangeUseCase(repo, new FakeCatalogFactory()).ExecuteAsync(
+            new CreateExchangeUseCase(repo, new FakeCatalogFactory(), Scope()).ExecuteAsync(
                 new CreateExchangeRequest { Code = "binance", Kind = "cex", DisplayName = "   " },
                 CancellationToken.None));
     }
@@ -315,7 +360,7 @@ public sealed class ExchangeConfigTests
     public async Task Create_WithUnknownCode_IsRejectedButKnownOnesMapToTheirCode()
     {
         FakeRepository repo = new();
-        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory());
+        CreateExchangeUseCase useCase = new(repo, new FakeCatalogFactory(), Scope());
 
         await Assert.ThrowsAsync<ArgumentException>(() => useCase.ExecuteAsync(
             new CreateExchangeRequest { Code = "不存在的所", Kind = "cex", DisplayName = "X" },
@@ -330,6 +375,8 @@ public sealed class ExchangeConfigTests
     }
 
     // ── fakes ─────────────────────────────────────────────
+
+    private static FakeUserDataScope Scope() => new() { UserId = 1L };
 
     private sealed class FakeRepository : IExchangeConfigRepository
     {

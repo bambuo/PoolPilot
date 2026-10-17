@@ -20,6 +20,12 @@ public sealed record ExchangeConfig
 {
     public long Id { get; init; }
 
+    /// <summary>
+    /// 创建者（会话用户主键）。工作台私有资源：普通账号只看得到自己的配置，
+    /// superadmin 保留全量视图。迁移前的老配置为 <c>null</c>，只有 superadmin 能看到。
+    /// </summary>
+    public long? OwnerUserId { get; init; }
+
     public required ExchangeCode Code { get; init; }
 
     public required ExchangeKind Kind { get; init; }

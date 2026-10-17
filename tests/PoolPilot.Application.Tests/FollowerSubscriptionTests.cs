@@ -32,7 +32,7 @@ public sealed class FollowerSubscriptionTests
         FakeLeadTraderRepository leads = new();
         FakeSync sync = new();
 
-        CreateFollowerUseCase useCase = new(followers, leads, new FakeExchangeRepository(), new FakeBrokerFactory(), Live(), sync);
+        CreateFollowerUseCase useCase = new(followers, leads, new FakeExchangeRepository(), new FakeBrokerFactory(), Live(), sync, Scope());
 
         ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() =>
             useCase.ExecuteAsync(
@@ -52,7 +52,7 @@ public sealed class FollowerSubscriptionTests
         await leads.UpsertAsync(Lead(), CancellationToken.None);
         FakeSync sync = new();
 
-        CreateFollowerUseCase useCase = new(followers, leads, new FakeExchangeRepository(), new FakeBrokerFactory(), Live(), sync);
+        CreateFollowerUseCase useCase = new(followers, leads, new FakeExchangeRepository(), new FakeBrokerFactory(), Live(), sync, Scope());
 
         FollowerDto dto = await useCase.ExecuteAsync(
             new Dtos.CreateFollowerRequest { LeadAccountIndex = Pool.Value, InitialCapital = 750m },
@@ -72,7 +72,7 @@ public sealed class FollowerSubscriptionTests
         FakeLeadTraderRepository leads = new();
         await leads.UpsertAsync(Lead(), CancellationToken.None);
 
-        CreateFollowerUseCase useCase = new(followers, leads, new FakeExchangeRepository(), new FakeBrokerFactory(), Live(), new FakeSync());
+        CreateFollowerUseCase useCase = new(followers, leads, new FakeExchangeRepository(), new FakeBrokerFactory(), Live(), new FakeSync(), Scope());
 
         ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() =>
             useCase.ExecuteAsync(
@@ -98,7 +98,7 @@ public sealed class FollowerSubscriptionTests
         exchanges.Rows.Add(Exchange(id: 7, code: ExchangeCode.Binance));
 
         CreateFollowerUseCase useCase = new(
-            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync());
+            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync(), Scope());
 
         FollowerDto dto = await useCase.ExecuteAsync(
             new Dtos.CreateFollowerRequest
@@ -128,7 +128,7 @@ public sealed class FollowerSubscriptionTests
 
         // 只认币安的券商工厂：Lighter 建出来会"看着在跑、一单都发不出去"
         CreateFollowerUseCase useCase = new(
-            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync());
+            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync(), Scope());
 
         ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() =>
             useCase.ExecuteAsync(
@@ -157,7 +157,7 @@ public sealed class FollowerSubscriptionTests
         exchanges.Rows.Add(Exchange(id: 7, code: ExchangeCode.Binance));
 
         CreateFollowerUseCase useCase = new(
-            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync());
+            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync(), Scope());
 
         ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() =>
             useCase.ExecuteAsync(
@@ -186,7 +186,7 @@ public sealed class FollowerSubscriptionTests
         exchanges.Rows.Add(Exchange(id: 7, code: ExchangeCode.Binance));
 
         CreateFollowerUseCase useCase = new(
-            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync());
+            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync(), Scope());
 
         FollowerDto dto = await useCase.ExecuteAsync(
             new Dtos.CreateFollowerRequest
@@ -263,7 +263,7 @@ public sealed class FollowerSubscriptionTests
         exchanges.Rows.Add(Exchange(id: 7, code: ExchangeCode.Binance));
 
         CreateFollowerUseCase useCase = new(
-            followers, leads, exchanges, new FakeBrokerFactory(), Live(enabled: false), new FakeSync());
+            followers, leads, exchanges, new FakeBrokerFactory(), Live(enabled: false), new FakeSync(), Scope());
 
         ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() =>
             useCase.ExecuteAsync(
@@ -287,7 +287,7 @@ public sealed class FollowerSubscriptionTests
         FakeLeadTraderRepository leads = new();
         await leads.UpsertAsync(Lead(), CancellationToken.None);
 
-        CreateFollowerUseCase useCase = new(followers, leads, new FakeExchangeRepository(), new FakeBrokerFactory(), Live(), new FakeSync());
+        CreateFollowerUseCase useCase = new(followers, leads, new FakeExchangeRepository(), new FakeBrokerFactory(), Live(), new FakeSync(), Scope());
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             useCase.ExecuteAsync(
@@ -311,8 +311,9 @@ public sealed class FollowerSubscriptionTests
             leads,
             followers,
             new EnsureLeadTraderUseCase(leads, new FakePoolsClient()),
-            new ListLeadTradersUseCase(leads, followers, new FakeEventRepository(), new FakeWatchState()),
-            new FakeSync());
+            new ListLeadTradersUseCase(leads, followers, new FakeEventRepository(), new FakeWatchState(), Scope()),
+            new FakeSync(),
+            Scope());
 
         ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() =>
             useCase.DeleteAsync(Pool, CancellationToken.None));
@@ -333,13 +334,95 @@ public sealed class FollowerSubscriptionTests
             leads,
             followers,
             new EnsureLeadTraderUseCase(leads, new FakePoolsClient()),
-            new ListLeadTradersUseCase(leads, followers, new FakeEventRepository(), new FakeWatchState()),
-            sync);
+            new ListLeadTradersUseCase(leads, followers, new FakeEventRepository(), new FakeWatchState(), Scope()),
+            sync,
+            Scope());
 
         await useCase.DeleteAsync(Pool, CancellationToken.None);
 
         Assert.IsEmpty(leads.Rows);
         Assert.AreEqual(1, sync.Requests, "删完要立刻让运行期退订");
+    }
+
+    [TestMethod]
+    public async Task PauseAndStopLeadTrader_AreAdminOnly_AndAdminCanPause()
+    {
+        FakeFollowerRepository followers = new();
+        FakeLeadTraderRepository leads = new();
+        await leads.UpsertAsync(Lead(), CancellationToken.None);
+
+        ConfigureLeadTraderUseCase nonAdmin = new(
+            leads,
+            followers,
+            new EnsureLeadTraderUseCase(leads, new FakePoolsClient()),
+            new ListLeadTradersUseCase(leads, followers, new FakeEventRepository(), new FakeWatchState(), Scope()),
+            new FakeSync(),
+            Scope(all: false));
+
+        ArgumentException pause = await Assert.ThrowsAsync<ArgumentException>(() =>
+            nonAdmin.ExecuteAsync(
+                Pool,
+                new ConfigureLeadTraderRequest { IsEnabled = false },
+                CancellationToken.None));
+
+        StringAssert.Contains(pause.Message, "管理员");
+        Assert.IsTrue(leads.Rows.Single().IsEnabled, "被拒时共享观察必须保持原状");
+
+        ArgumentException stop = await Assert.ThrowsAsync<ArgumentException>(() =>
+            nonAdmin.DeleteAsync(Pool, CancellationToken.None));
+
+        StringAssert.Contains(stop.Message, "管理员");
+        Assert.HasCount(1, leads.Rows, "被拒时带单员必须还在");
+
+        ConfigureLeadTraderUseCase admin = new(
+            leads,
+            followers,
+            new EnsureLeadTraderUseCase(leads, new FakePoolsClient()),
+            new ListLeadTradersUseCase(leads, followers, new FakeEventRepository(), new FakeWatchState(), Scope(all: true)),
+            new FakeSync(),
+            Scope(all: true));
+
+        LeadTraderDto paused = await admin.ExecuteAsync(
+            Pool,
+            new ConfigureLeadTraderRequest { IsEnabled = false },
+            CancellationToken.None);
+
+        Assert.IsFalse(paused.IsEnabled);
+        Assert.IsFalse(leads.Rows.Single().IsEnabled);
+    }
+
+    [TestMethod]
+    public async Task CreateFollower_RecordsOwnerAndRejectsAnotherUsersExchangeConfig()
+    {
+        FakeFollowerRepository followers = new();
+        FakeLeadTraderRepository leads = new();
+        await leads.UpsertAsync(Lead(), CancellationToken.None);
+
+        FakeExchangeRepository exchanges = new();
+        exchanges.Rows.Add(Exchange(id: 7, code: ExchangeCode.Binance, owner: 2L));
+
+        CreateFollowerUseCase useCase = new(
+            followers, leads, exchanges, new FakeBrokerFactory(), Live(), new FakeSync(), Scope(all: false));
+
+        ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            useCase.ExecuteAsync(
+                new Dtos.CreateFollowerRequest
+                {
+                    LeadAccountIndex = Pool.Value,
+                    InitialCapital = 120m,
+                    Mode = "live",
+                    ExchangeConfigId = 7,
+                },
+                CancellationToken.None));
+
+        StringAssert.Contains(error.Message, "不存在", "别人的配置不该暴露存在性");
+        Assert.AreEqual(0, followers.Created);
+
+        await useCase.ExecuteAsync(
+            new Dtos.CreateFollowerRequest { LeadAccountIndex = Pool.Value, InitialCapital = 500m },
+            CancellationToken.None);
+
+        Assert.AreEqual(1L, followers.Last!.OwnerUserId, "工作台建的行必须记住创建者");
     }
 
     private static LeadTrader Lead() => new()
@@ -360,6 +443,9 @@ public sealed class FollowerSubscriptionTests
     };
 
     // ── fakes（不用 mock 框架，按项目约定）────────────────
+
+    /// <summary>默认给全量视图，保持这批"订阅关系"用例原有的可见范围；隔离用例自己传普通账号。</summary>
+    private static FakeUserDataScope Scope(bool all = true) => new() { UserId = 1L, CanSeeAll = all };
 
     private sealed class FakeFollowerRepository : IFollowerRepository
     {
@@ -572,9 +658,10 @@ public sealed class FollowerSubscriptionTests
             Task.CompletedTask;
     }
 
-    private static ExchangeConfig Exchange(long id, ExchangeCode code) => new()
+    private static ExchangeConfig Exchange(long id, ExchangeCode code, long? owner = null) => new()
     {
         Id = id,
+        OwnerUserId = owner,
         Code = code,
         Kind = ExchangeKind.Cex,
         DisplayName = $"{ExchangeEnumText.ToText(code)} 主账号",

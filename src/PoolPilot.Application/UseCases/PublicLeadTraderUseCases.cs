@@ -20,7 +20,7 @@ public sealed class ListPublicLeadTradersUseCase(ListLeadTradersUseCase leads)
     public async Task<IReadOnlyList<PublicLeadTraderDto>> ExecuteAsync(
         CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<LeadTraderDto> all = await leads.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<LeadTraderDto> all = await leads.ExecutePublicAsync(cancellationToken).ConfigureAwait(false);
 
         return [.. all.Select(PublicPageMapper.ToPublicLead)];
     }
@@ -68,6 +68,6 @@ public sealed class AddPublicLeadTraderUseCase(
             .ConfigureAwait(false);
 
         return PublicPageMapper.ToPublicLead(
-            await list.ExecuteAsync(lead.AccountIndex, cancellationToken).ConfigureAwait(false));
+            await list.ExecutePublicAsync(lead.AccountIndex, cancellationToken).ConfigureAwait(false));
     }
 }

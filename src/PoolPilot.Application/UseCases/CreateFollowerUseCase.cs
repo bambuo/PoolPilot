@@ -26,7 +26,8 @@ public sealed class CreateFollowerUseCase(
     IExchangeConfigRepository exchanges,
     IExchangeBrokerFactory brokers,
     LiveTradingLimits limits,
-    ILeadTraderSync sync)
+    ILeadTraderSync sync,
+    IUserDataScope scope)
 {
     public async Task<FollowerDto> ExecuteAsync(
         CreateFollowerRequest request,
@@ -60,6 +61,7 @@ public sealed class CreateFollowerUseCase(
             new Follower
             {
                 LeadAccountIndex = pool,
+                OwnerUserId = scope.UserId,
                 InitialCapital = UsdAmount.From(request.InitialCapital),
                 Mode = mode,
                 ExchangeConfigId = exchangeConfigId,
@@ -95,6 +97,13 @@ public sealed class CreateFollowerUseCase(
 
         ExchangeConfig config = await exchanges.GetAsync(configId, cancellationToken).ConfigureAwait(false)
             ?? throw new ArgumentException($"交易所配置 {configId} 不存在。", nameof(exchangeConfigId));
+
+        // 私有配置只能绑到自己的跟单上：知道别人的配置 Id 不等于能用它下单。
+        // 与"不存在"同一句话，避免把别人的配置 Id 变成探针。
+        if (!await scope.CanAccessOwnerAsync(config.OwnerUserId, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ArgumentException($"交易所配置 {configId} 不存在。", nameof(exchangeConfigId));
+        }
 
         if (brokers.Create(config) is null)
         {

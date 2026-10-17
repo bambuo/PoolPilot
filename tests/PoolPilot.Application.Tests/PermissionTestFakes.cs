@@ -323,6 +323,23 @@ internal sealed class FakeCurrentUser : ICurrentUser
     public long? UserId { get; set; }
 }
 
+/// <summary>假数据作用域：默认普通账号（只看自己的），CanSeeAll 模拟 superadmin。</summary>
+internal sealed class FakeUserDataScope : IUserDataScope
+{
+    public long UserId { get; set; } = 1L;
+
+    public bool CanSeeAll { get; set; }
+
+    public Task<bool> CanSeeAllAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(CanSeeAll);
+
+    public Task<bool> CanAccessOwnerAsync(long? ownerUserId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(CanSeeAll || ownerUserId == UserId);
+
+    public Task<long?> OwnerFilterAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(CanSeeAll ? (long?)null : UserId);
+}
+
 /// <summary>假写侧：只数被重建了几次（"每次写操作后重建"这句话的可断言形式）。</summary>
 internal sealed class FakePolicyWriter : IPolicyWriter
 {

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 
 using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Dtos;
+using PoolPilot.Application.Services;
 using PoolPilot.Application.UseCases;
 using PoolPilot.Domain.Constants;
 
@@ -33,8 +34,19 @@ public sealed class ExchangesController(
     DeleteExchangeUseCase delete,
     ProbeExchangeUseCase probe,
     PlanLiveOrderUseCase planOrder,
-    MapPoolMarketsUseCase mapMarkets) : ControllerBase
+    MapPoolMarketsUseCase mapMarkets,
+    ExchangeAccessGuard access) : ControllerBase
 {
+    /// <summary>
+    /// 交易所配置是私有资源：普通账号只能碰自己的，superadmin 可跨用户。
+    /// 不可访问与不存在回同一句话，避免把配置 Id 变成探针。
+    /// </summary>
+    private async Task<bool> CanAccessAsync(long id, CancellationToken cancellationToken) =>
+        await access.FindAsync(id, cancellationToken).ConfigureAwait(false) is not null;
+
+    private NotFoundObjectResult Missing(long id) =>
+        NotFound(new { error = $"交易所配置 {id} 不存在。" });
+
     /// <summary>全部交易所配置（不含任何凭据字段）。</summary>
     [HttpGet]
     [RequirePermission(PermissionKeys.Exchanges, MenuActions.View)]
@@ -66,6 +78,11 @@ public sealed class ExchangesController(
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
         return Ok(await update.ExecuteAsync(id, request, cancellationToken).ConfigureAwait(false));
     }
 
@@ -74,6 +91,11 @@ public sealed class ExchangesController(
     [RequirePermission(PermissionKeys.Exchanges, MenuActions.Delete)]
     public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken = default)
     {
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
         await delete.ExecuteAsync(id, cancellationToken).ConfigureAwait(false);
 
         return NoContent();
@@ -89,8 +111,15 @@ public sealed class ExchangesController(
     [RequireAnyPermission(PermissionKeys.Exchanges, MenuActions.Edit, PermissionKeys.CopyList, MenuActions.Edit)]
     public async Task<ActionResult<ExchangeProbeDto>> Probe(
         long id,
-        CancellationToken cancellationToken = default) =>
-        Ok(await probe.ExecuteAsync(id, cancellationToken).ConfigureAwait(false));
+        CancellationToken cancellationToken = default)
+    {
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
+        return Ok(await probe.ExecuteAsync(id, cancellationToken).ConfigureAwait(false));
+    }
 
     /// <summary>
     /// 某个池的各个市场**能不能在目标平台上跟**，以及为什么。
@@ -103,10 +132,17 @@ public sealed class ExchangesController(
     public async Task<ActionResult<IReadOnlyList<MarketMappingDto>>> SymbolMap(
         long id,
         [FromQuery] long pool,
-        CancellationToken cancellationToken = default) =>
-        Ok(await mapMarkets
+        CancellationToken cancellationToken = default)
+    {
+        if (!await CanAccessAsync(id, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(id);
+        }
+
+        return Ok(await mapMarkets
             .ExecuteAsync(id, Domain.ValueObjects.AccountIndex.From(pool), cancellationToken)
             .ConfigureAwait(false));
+    }
 
     /// <summary>
     /// 规划一笔实盘订单并**只校验不成交**（币安 <c>/order/test</c>）。
@@ -121,6 +157,11 @@ public sealed class ExchangesController(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        if (!await CanAccessAsync(request.ExchangeId, cancellationToken).ConfigureAwait(false))
+        {
+            return Missing(request.ExchangeId);
+        }
 
         return Ok(await planOrder.ExecuteAsync(request, cancellationToken).ConfigureAwait(false));
     }

@@ -263,6 +263,59 @@ public sealed class DatabaseSchemaInitializerTests
         }
     }
 
+    /// <summary>
+    /// exchange_configs 的归属列：可空，老库补列后为 NULL。NULL 在作用域里读成
+    /// "只有 superadmin 可见"，不能顺手分给第一个账号。
+    /// </summary>
+    [TestMethod]
+    public void EnsureSchema_WhenExchangeConfigsMissingOwner_BackfillsNull()
+    {
+        string path = Temp();
+
+        try
+        {
+            using (PoolPilotDbContext db = Open(path))
+            {
+                DatabaseSchemaInitializer.EnsureSchemaAsync(db, NullLogger.Instance).GetAwaiter().GetResult();
+
+                db.ExchangeConfigs.Add(new ExchangeConfigRecord
+                {
+                    Code = "binance",
+                    Kind = "cex",
+                    DisplayName = "老配置",
+                    MakerFeePercent = 0.02m,
+                    TakerFeePercent = 0.05m,
+                    IsEnabled = true,
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                });
+
+                db.SaveChangesAsync().GetAwaiter().GetResult();
+            }
+
+            Execute(path, "ALTER TABLE \"exchange_configs\" DROP COLUMN \"OwnerUserId\"");
+
+            using (PoolPilotDbContext db = Open(path))
+            {
+                IReadOnlyList<string> created = DatabaseSchemaInitializer
+                    .EnsureSchemaAsync(db, NullLogger.Instance).GetAwaiter().GetResult();
+
+                CollectionAssert.Contains(
+                    created.ToList(),
+                    "exchange_configs.OwnerUserId",
+                    "可空归属列应当被原地补上");
+            }
+
+            using (PoolPilotDbContext db = Open(path))
+            {
+                Assert.IsNull(db.ExchangeConfigs.Single().OwnerUserId, "老配置不能被自动分配归属");
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [TestMethod]
     public void EnsureSchema_WhenMissingNotNullColumnWithoutDefault_WarnsAndDoesNotGuess()
     {

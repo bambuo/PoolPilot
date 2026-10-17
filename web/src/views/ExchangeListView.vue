@@ -464,6 +464,7 @@ onMounted(async () => {
         <b>执行侧目前只有币安 U 本位永续</b>，OKX 与 Gate 只有合约目录（供标的映射用）。
         界面上的费率只是预填的常见标准档，请按你的实际档位改。
         凭据<b>以明文保存在本机数据库</b>（未加密，也不假装加密），只放权限最小、能随时吊销的密钥。
+        普通账号只看得到<b>自己创建的</b>配置；superadmin 可跨用户查看。
       </div>
 
       <div v-if="!canEdit && !canDelete" class="readonly-line" style="margin-top: 10px">

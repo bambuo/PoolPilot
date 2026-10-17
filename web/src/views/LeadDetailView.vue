@@ -19,11 +19,14 @@ const PAGE_PERMISSION = 'menu:leads'
 
 const route = useRoute()
 const router = useRouter()
-const { can, refresh: refreshPermissions } = usePermission()
+const { can, hasRole, refresh: refreshPermissions } = usePermission()
 
 const accountIndex = computed(() => String(route.params.accountIndex))
 const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
 const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
+
+/// 共享带单员的暂停/恢复/停止只许 superadmin 操作。
+const isAdmin = computed(() => hasRole('superadmin'))
 
 const lead = ref<LeadTrader | null>(null)
 const pool = ref<PoolDetail | null>(null)
@@ -209,8 +212,14 @@ onMounted(async () => {
             v-if="lead"
             size="small"
             :loading="actionLoading"
-            :disabled="!canEdit"
-            :title="canEdit ? '' : '需要「带单管理」的管理权限（编辑）'"
+            :disabled="!canEdit || !isAdmin"
+            :title="
+              !canEdit
+                ? '需要「带单管理」的管理权限（编辑）'
+                : !isAdmin
+                  ? '共享的带单员只有管理员可以暂停或恢复观察'
+                  : ''
+            "
             @click="setEnabled(!lead.isEnabled)"
           >
             {{ lead.isEnabled ? '暂停观察' : '恢复观察' }}
@@ -224,8 +233,14 @@ onMounted(async () => {
               size="small"
               status="danger"
               :loading="actionLoading"
-              :disabled="!canDelete"
-              :title="canDelete ? '' : '需要「带单管理」的管理权限（删除）'"
+              :disabled="!canDelete || !isAdmin"
+              :title="
+                !canDelete
+                  ? '需要「带单管理」的管理权限（删除）'
+                  : !isAdmin
+                    ? '共享的带单员只有管理员可以停止观察'
+                    : ''
+              "
             >
               停止观察
             </a-button>

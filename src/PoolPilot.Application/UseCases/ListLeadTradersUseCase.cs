@@ -17,10 +17,44 @@ public sealed class ListLeadTradersUseCase(
     ILeadTraderRepository leads,
     IFollowerRepository followers,
     IPoolEventRepository events,
-    ILeadWatchState watchState)
+    ILeadWatchState watchState,
+    IUserDataScope scope)
 {
     public async Task<IReadOnlyList<LeadTraderDto>> ExecuteAsync(
         CancellationToken cancellationToken = default)
+    {
+        long? owner = await scope.OwnerFilterAsync(cancellationToken).ConfigureAwait(false);
+
+        return await ExecuteCoreAsync(includePublic: false, owner, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 公开页的列表：订阅数是**全量**的（公开页本来就展示"有几个人在跟"），
+    /// 也不按用户过滤——匿名访客没有用户身份。工作台私有列表走另一条入口。
+    /// </summary>
+    public Task<IReadOnlyList<LeadTraderDto>> ExecutePublicAsync(
+        CancellationToken cancellationToken = default) =>
+        ExecuteCoreAsync(includePublic: true, owner: null, cancellationToken);
+
+    /// <summary>单个带单员的 DTO。创建/启停之后直接复用，避免再写一套映射。</summary>
+    public async Task<LeadTraderDto> ExecuteAsync(
+        AccountIndex pool,
+        CancellationToken cancellationToken = default)
+    {
+        long? owner = await scope.OwnerFilterAsync(cancellationToken).ConfigureAwait(false);
+
+        return await ExecuteOneAsync(pool, includePublic: false, owner, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<LeadTraderDto> ExecutePublicAsync(
+        AccountIndex pool,
+        CancellationToken cancellationToken = default) =>
+        ExecuteOneAsync(pool, includePublic: true, owner: null, cancellationToken);
+
+    private async Task<IReadOnlyList<LeadTraderDto>> ExecuteCoreAsync(
+        bool includePublic,
+        long? owner,
+        CancellationToken cancellationToken)
     {
         Task<IReadOnlyList<LeadTrader>> leadsTask = leads.ListAsync(cancellationToken);
         Task<IReadOnlyList<Follower>> followersTask = followers.ListAsync(cancellationToken);
@@ -29,7 +63,10 @@ public sealed class ListLeadTradersUseCase(
         await Task.WhenAll(leadsTask, followersTask, statsTask).ConfigureAwait(false);
 
         IReadOnlyList<LeadTrader> all = await leadsTask.ConfigureAwait(false);
-        IReadOnlyList<Follower> subscribers = await followersTask.ConfigureAwait(false);
+        IReadOnlyList<Follower> subscribers = VisibleSubscribers(
+            await followersTask.ConfigureAwait(false),
+            includePublic,
+            owner);
         Dictionary<long, PoolSignalStats> stats = (await statsTask.ConfigureAwait(false))
             .ToDictionary(s => s.Pool.Value);
 
@@ -42,25 +79,36 @@ public sealed class ListLeadTradersUseCase(
         ];
     }
 
-    /// <summary>单个带单员的 DTO。创建/启停之后直接复用，避免再写一套映射。</summary>
-    public async Task<LeadTraderDto> ExecuteAsync(
+    private async Task<LeadTraderDto> ExecuteOneAsync(
         AccountIndex pool,
-        CancellationToken cancellationToken = default)
+        bool includePublic,
+        long? owner,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(pool);
 
         LeadTrader lead = await leads.GetAsync(pool, cancellationToken).ConfigureAwait(false)
             ?? throw new ArgumentException($"账户索引 {pool.Value} 上没有带单员。", nameof(pool));
 
-        IReadOnlyList<Follower> subscribers = await followers
-            .ListByLeadAsync(pool, cancellationToken)
-            .ConfigureAwait(false);
+        IReadOnlyList<Follower> subscribers = VisibleSubscribers(
+            await followers.ListByLeadAsync(pool, cancellationToken).ConfigureAwait(false),
+            includePublic,
+            owner);
 
         PoolSignalStats? stats = (await events.GetSignalStatsAsync(cancellationToken).ConfigureAwait(false))
             .FirstOrDefault(s => s.Pool == pool);
 
         return ToDto(lead, subscribers, stats);
     }
+
+    private static IReadOnlyList<Follower> VisibleSubscribers(
+        IReadOnlyList<Follower> rows,
+        bool includePublic,
+        long? owner) =>
+    [
+        .. rows.Where(row => includePublic
+            || (!row.IsPublic && (owner is null || row.OwnerUserId == owner))),
+    ];
 
     private LeadTraderDto ToDto(
         LeadTrader lead,

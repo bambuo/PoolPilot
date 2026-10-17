@@ -10,6 +10,10 @@ import { permissionApi } from '@/api/client'
 /// 缓存到**会话结束**为止：退出登录时 clear()，重新登录后第一次用到的页面 refresh()。
 const grants = ref<Map<string, Set<string>>>(new Map())
 
+/// 当前会话的角色 code。页面偶尔要按"是不是超管"做按钮级限制
+/// （共享带单员的暂停/停止只许管理员操作），这份快照是唯一来源。
+const roleCodes = ref<Set<string>>(new Set())
+
 /// 快照是否已经拉过。**"没拉过"与"拉过但没有权限"是两回事**：
 /// 前者该先 refresh 一次再判断（否则默认拒绝会把合法的连接/按钮也挡掉），
 /// 后者才是真的没有权限。
@@ -24,6 +28,7 @@ async function refresh(): Promise<void> {
   }
 
   grants.value = map
+  roleCodes.value = new Set(snapshot.roles.map((role) => role.code))
   loaded.value = true
 }
 
@@ -35,11 +40,17 @@ function can(permissionKey: string, action: string): boolean {
   return grants.value.get(permissionKey)?.has(action) ?? false
 }
 
+/// 当前会话是否持有某个角色。未知或未加载一律 false。
+function hasRole(code: string): boolean {
+  return roleCodes.value.has(code)
+}
+
 function clear(): void {
   grants.value = new Map()
+  roleCodes.value = new Set()
   loaded.value = false
 }
 
 export function usePermission() {
-  return { can, refresh, clear, loaded }
+  return { can, hasRole, refresh, clear, loaded }
 }

@@ -817,6 +817,9 @@ public sealed class ExchangeConfigRecord
 {
     public long Id { get; set; }
 
+    /// <summary>创建者；迁移前的老配置为 NULL，只对 superadmin 可见。</summary>
+    public long? OwnerUserId { get; set; }
+
     /// <summary><c>lighter</c> / <c>binance</c> / <c>okx</c> / <c>gate</c> / <c>custom</c>。</summary>
     public string Code { get; set; } = "custom";
 
@@ -865,6 +868,7 @@ public sealed class ExchangeConfigRecord
         return new ExchangeConfigRecord
         {
             Id = source.Id,
+            OwnerUserId = source.OwnerUserId,
             Code = ExchangeEnumText.ToText(source.Code),
             Kind = ExchangeEnumText.ToText(source.Kind),
             DisplayName = source.DisplayName,
@@ -886,6 +890,7 @@ public sealed class ExchangeConfigRecord
     public ExchangeConfig ToDomain() => new()
     {
         Id = Id,
+        OwnerUserId = OwnerUserId,
         Code = ExchangeEnumText.ReadCode(Code),
         Kind = ExchangeEnumText.ReadKind(Kind),
         DisplayName = DisplayName,

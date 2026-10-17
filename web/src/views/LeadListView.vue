@@ -25,10 +25,13 @@ import { filterPoolOption, poolOptionLabel } from '@/utils/poolOptions'
 /// 与菜单管理页同一套动作语义。
 const PAGE_PERMISSION = 'menu:leads'
 
-const { can, refresh: refreshPermissions } = usePermission()
+const { can, hasRole, refresh: refreshPermissions } = usePermission()
 
 const canEdit = computed(() => can(PAGE_PERMISSION, 'edit'))
 const canDelete = computed(() => can(PAGE_PERMISSION, 'delete'))
+
+/// 共享带单员的暂停/恢复/停止只许 superadmin 操作；创建新观察不受限制。
+const isAdmin = computed(() => hasRole('superadmin'))
 
 const leads = ref<LeadTrader[]>([])
 const pools = ref<PoolSummary[]>([])
@@ -54,7 +57,14 @@ const followerCountOf = (index: number | string): number => {
 /// 可创建的池：冻结的排除（运营者已收摊，没有盯的价值）。
 /// 已有带单员的池**保留在下拉里**——选中它就是把这个带单员重新打开，
 /// 比"先在卡片里找到它再点恢复"更顺手。
-const selectablePools = computed(() => pools.value.filter((p) => !p.isFrozen))
+/// 但这条"重新打开"属于共享开关，只有管理员能做；普通账号只列还没有带单员的池。
+const selectablePools = computed(() =>
+  pools.value.filter(
+    (pool) =>
+      !pool.isFrozen
+      && (isAdmin.value || !leadIndexes.value.has(String(pool.accountIndex))),
+  ),
+)
 
 const poolNameOf = (index: number | string): string => {
   const key = String(index)
@@ -172,6 +182,7 @@ onMounted(async () => {
         一个带单员负责盯着一个池：订阅它的持仓与成交流，把每次仓位变化记成信号。
         <b>它的存在与有没有人跟单无关</b>——只要它在，池子就一直被观察，
         这样「先观察一段时间再决定跟不跟」才有历史可看。
+        带单员是<b>共享观察对象</b>：暂停、恢复与停止只有管理员可以操作。
       </div>
 
       <div v-if="!canEdit && !canDelete" class="readonly-line">
@@ -235,24 +246,42 @@ onMounted(async () => {
             <a-space :size="12">
               <a-link
                 v-if="lead.isEnabled"
-                :disabled="!canEdit"
-                :title="canEdit ? '' : '需要「带单管理」的管理权限（编辑）'"
+                :disabled="!canEdit || !isAdmin"
+                :title="
+                  !canEdit
+                    ? '需要「带单管理」的管理权限（编辑）'
+                    : !isAdmin
+                      ? '共享的带单员只有管理员可以暂停或恢复观察'
+                      : ''
+                "
                 @click="setEnabled(lead, false)"
               >
                 暂停
               </a-link>
               <a-link
                 v-else
-                :disabled="!canEdit"
-                :title="canEdit ? '' : '需要「带单管理」的管理权限（编辑）'"
+                :disabled="!canEdit || !isAdmin"
+                :title="
+                  !canEdit
+                    ? '需要「带单管理」的管理权限（编辑）'
+                    : !isAdmin
+                      ? '共享的带单员只有管理员可以暂停或恢复观察'
+                      : ''
+                "
                 @click="setEnabled(lead, true)"
               >
                 恢复
               </a-link>
               <a-link
                 status="danger"
-                :disabled="!canDelete"
-                :title="canDelete ? '' : '需要「带单管理」的管理权限（删除）'"
+                :disabled="!canDelete || !isAdmin"
+                :title="
+                  !canDelete
+                    ? '需要「带单管理」的管理权限（删除）'
+                    : !isAdmin
+                      ? '共享的带单员只有管理员可以停止观察'
+                      : ''
+                "
                 @click="stop(lead)"
               >
                 停止
