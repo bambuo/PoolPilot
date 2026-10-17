@@ -4,8 +4,10 @@
 它们的存在是为了让"这套系统在看哪些池、跟得怎么样"这件事可以被陌生人观察，
 而陌生人不必为了看一眼就注册；顺带允许他不留身份地建一份**纸面**跟单来自己试。
 
-**默认全关**。开关在 `appsettings.json` 的 `PublicPages` 节（`Leads` / `Followers` 各自一刀），
-代码里的默认值是 false。这两页匿名可写，打开之前要确认这台部署确实想对外。
+**源码默认全关，deb 包默认打开**。开关在 `appsettings.json` 的 `PublicPages` 节与包的
+`/etc/default/poolpilot`（`PublicPages__Leads` / `PublicPages__Followers` 各自一刀）。
+代码里的默认值是 false；deb 包为了公开部署把它显式覆盖成 true。这两页匿名可写，
+打开之前要确认这台部署确实想对外。
 
 ## 一、两页各自能做什么
 
@@ -37,11 +39,11 @@ Casbin 的主体是"用户 / 角色"，而匿名访客不是主体——给他�
 
 替权限挡在那里的是三道闸：
 
-1. **功能开关**（`PublicPages`，默认关）。关掉时每个公开端点回 **404 而不是 403**——
+1. **功能开关**（`PublicPages`，源码默认关、deb 包默认开）。关掉时每个公开端点回 **404 而不是 403**——
    一个没开放的功能不该让人探测得出它存在。
 2. **按来源地址的限流**（`Microsoft.AspNetCore.RateLimiting`，框架自带，未引入任何包）：
    读 60 次/分钟、写 10 次/小时，超限回 429 + `Retry-After`。
-   状态读口（`/api/public/status`）只回两个布尔，不占读额度。
+   状态读口（`/api/public/status`）只回三个布尔，不占读额度。
 3. **数量上限**（`src/PoolPilot.Domain/Constants/PublicPageLimits.cs`，**代码常量**，
    回退方式是改常量重新发布）：
 
@@ -159,7 +161,7 @@ GET /api/public/stream?lead=<index>  → event: lead（从池详情精选的公�
   `isOwnedByCaller`。前端在页面打开时调用一次
   `GET /api/public/followers/ownership`（只回当前调用者的公开行 Id，不装配估值、不打上游），
   建/删后本地增删。**它不是轮询**：卡片与详情的数据仍然只来自 SSE。
-- **状态读口**：`GET /api/public/status` 只回 `{ leads, followers }` 两个布尔，匿名、不挂开关、
+- **状态读口**：`GET /api/public/status` 只回 `{ leads, followers, accountsEnabled }` 三个布尔，匿名、不挂开关、
   两片都关时也回 200。页面先问它一句，明确关掉时显示"未启用"，而不是让 EventSource
   永远停在"连接中"（EventSource 看不到 404 的响应体）。
 - **零轮询**：前端没有 `usePolling`/`setInterval`，断线只由 `EventSource` 原生重连；

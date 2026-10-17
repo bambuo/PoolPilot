@@ -254,6 +254,14 @@ internal class AuthTestApp : WebApplicationFactory<Program>
         Path.GetTempPath(),
         $"poolpilot-apitest-{Guid.NewGuid():N}.db");
 
+    private readonly string? _webRoot;
+
+    /// <param name="webRoot">
+    /// 可选的临时 wwwroot。SPA 回退用例需要一份 index.html 来证明"客户端路由能拿到前端"；
+    /// 其余用例传 null，保持与原先完全一样（没有静态文件）。
+    /// </param>
+    public AuthTestApp(string? webRoot = null) => _webRoot = webRoot;
+
     public CapturingMailer Mailer { get; } = new();
 
     /// <summary>直接打开那份临时库（测试用它做"确实落在临时库上"的守卫，以及播种/核对行数据）。</summary>
@@ -268,6 +276,11 @@ internal class AuthTestApp : WebApplicationFactory<Program>
 
         // 后台监控会去连交易所，在这一组测试里没有意义
         builder.UseSetting("LeadTraders:Enabled", "false");
+
+        if (_webRoot is not null)
+        {
+            builder.UseWebRoot(_webRoot);
+        }
 
         builder.ConfigureServices(services =>
         {

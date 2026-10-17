@@ -198,7 +198,7 @@ m = g(r.sub, "role:superadmin") || (g(r.sub, p.sub) && r.obj == p.obj && r.act =
 这套模型回答的是"工作台里的这个人能不能做这件事"，而匿名访客不是一个主体：
 给他一个键，要么所有人都有（等于没有），要么先给他一个身份（他就不是匿名访客了）。
 
-顶在那里的三道闸是功能开关（`PublicPages`，默认关，关掉时回 404）、数量上限
+顶在那里的三道闸是功能开关（`PublicPages`，源码默认关、deb 包默认开，关掉时回 404）、数量上限
 （`PoolPilot.Domain.Constants.PublicPageLimits`，代码常量）与按来源地址的限流。
 "创建者能删自己那条公开跟单"用的也不是角色，而是一枚访客 Cookie 派生出的能力
 （库里只存哈希）。整套设计与对外部署的前提见 [PUBLIC-PAGES.md](PUBLIC-PAGES.md)。

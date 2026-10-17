@@ -1,0 +1,23 @@
+# PoolPilot 服务配置（dpkg conffile）。
+#
+# 修改后：sudo systemctl restart poolpilot
+#
+# ⚠️ 安全警告：默认监听 0.0.0.0:5274，且服务本身不终止 TLS。
+# 当前会话 Cookie 未设置 Secure，直接把 5274 暴露到公网会让登录密码、MFA 码和
+# 会话 Cookie 以明文经过网络。公网部署请改回 127.0.0.1，再用 nginx/caddy 做 TLS
+# 与反向代理；或者只放在防火墙/VPN 后。详见 /usr/share/doc/poolpilot/README.Debian。
+
+ASPNETCORE_ENVIRONMENT=Production
+ASPNETCORE_URLS=http://0.0.0.0:5274
+
+# 数据目录：SQLite、WAL、DataProtection keys。
+PoolPilot__DataDirectory=/var/lib/poolpilot
+
+# 公开页在本 deb 包中默认打开（面向公开部署）。不需要时改成 false 并重启服务。
+# 公开页匿名可达，打开前先读包内 /usr/share/doc/poolpilot/README.Debian 的安全前提。
+PublicPages__Leads=true
+PublicPages__Followers=true
+
+# 登录/注册总开关。公开-only 部署改成 false：登录、注册、MFA 与首次初始化端点回 404，
+# 公开页头部也会自动隐藏登录/注册入口。已有的会话不会因此被吊销。
+Auth__AccountsEnabled=true

@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+# 服务专用账号：不能登录、没有 home 写权限，只拥有 /var/lib/poolpilot。
+if ! getent group poolpilot >/dev/null; then
+    groupadd --system poolpilot
+fi
+
+if ! getent passwd poolpilot >/dev/null; then
+    useradd --system \
+        --gid poolpilot \
+        --home-dir /var/lib/poolpilot \
+        --no-create-home \
+        --shell /usr/sbin/nologin \
+        poolpilot
+fi
+
+install -d -o poolpilot -g poolpilot -m 0700 /var/lib/poolpilot
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable poolpilot.service >/dev/null 2>&1 || true
+    systemctl restart poolpilot.service || true
+else
+    echo "systemd 未运行；请手动启动 /opt/poolpilot/api/PoolPilot.Api。" >&2
+fi
+
+exit 0

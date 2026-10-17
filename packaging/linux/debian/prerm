@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    systemctl stop poolpilot.service >/dev/null 2>&1 || true
+
+    # 升级时保留启用状态；卸载时把 enable 建出的 symlink 一起清掉。
+    if [ "${1:-}" = "remove" ]; then
+        systemctl disable poolpilot.service >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0

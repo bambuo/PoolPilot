@@ -614,6 +614,7 @@ public sealed class PublicPagesApiTests
             (await response.Content.ReadFromJsonAsync<PublicPageStatusDto>())!;
         Assert.IsFalse(bothOff.Leads);
         Assert.IsFalse(bothOff.Followers);
+        Assert.IsTrue(bothOff.AccountsEnabled, "默认部署仍允许登录/注册");
 
         using PublicPagesApp half = new(leads: true, followers: false);
         using HttpClient halfClient = half.CreateClient();
@@ -622,6 +623,7 @@ public sealed class PublicPagesApiTests
             new Uri(StatusPath, UriKind.Relative)))!;
         Assert.IsTrue(halfOn.Leads);
         Assert.IsFalse(halfOn.Followers);
+        Assert.IsTrue(halfOn.AccountsEnabled);
     }
 
     [TestMethod]

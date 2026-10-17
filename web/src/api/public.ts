@@ -211,6 +211,8 @@ export interface PublicPoolOption {
 export interface PublicPageStatus {
   leads: boolean
   followers: boolean
+  /** false = 登录/注册流程在服务端被关闭；公开页据此隐藏入口并拦下认证页。 */
+  accountsEnabled: boolean
 }
 
 /**

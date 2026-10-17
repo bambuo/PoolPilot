@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+if [ "$1" = "purge" ]; then
+    # 数据目录里有账本、交易所凭据与 MFA 种子，不能替管理员做删除决定。
+    echo "保留数据目录 /var/lib/poolpilot（如确认不再需要，请手工删除）。"
+fi
+
+exit 0

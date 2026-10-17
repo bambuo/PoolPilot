@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { usePublicPageStatus } from '@/composables/usePublicPageStatus'
 import { useSession } from '@/composables/useSession'
 import { useSetup } from '@/composables/useSetup'
 import { useMenu } from '@/composables/useMenu'
@@ -31,6 +32,11 @@ export const PUBLIC_HOME_PATH = '/public/leads'
 /// 改成显式集合：新增公开页默认**不**被弹走，新增登录流程页要记得加进来。
 /// `mfa` 不在这里：那一刻会话刚签发、挑战还没用完（绑定同理），要把人留在本页走完。
 const AUTH_ONLY_ROUTE_NAMES: string[] = ['login', 'register', 'setup']
+
+/// 认证流程页。服务端关闭登录/注册时，这几页不应该再给匿名访客看到表单——
+/// 守卫读到 `/api/public/status` 的 `accountsEnabled === false` 就把人送回公开首页。
+/// 后端仍然会 404，守卫只是让界面不展示一条注定失败的流程。
+const ACCOUNTS_ROUTE_NAMES: string[] = ['login', 'register', 'mfa', 'setup']
 
 /// 路由表。**只保留与权限无关的那些**：公开页、旧地址重定向、无权限页与兜底。
 ///
@@ -123,6 +129,17 @@ router.beforeEach(async (to) => {
   // 未初始化意味着注册验证码根本发不出去，先把人引到初始化页，注册才有意义。
   if (setup.needsSetup.value === null) {
     await setup.load()
+  }
+
+  // 服务端关闭登录/注册时，认证流程页不再对匿名访客展示表单；直接回落公开首页。
+  // 已有会话的用户仍按原逻辑走（登录页会把他送回工作台）。
+  if (user.value === null && typeof to.name === 'string' && ACCOUNTS_ROUTE_NAMES.includes(to.name)) {
+    const pageStatus = usePublicPageStatus()
+    await pageStatus.load()
+
+    if (pageStatus.status.value?.accountsEnabled === false) {
+      return { path: PUBLIC_HOME_PATH, replace: true }
+    }
   }
 
   const isPublic = to.meta.public === true

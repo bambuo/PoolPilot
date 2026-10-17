@@ -1,0 +1,40 @@
+PoolPilot for Debian/Ubuntu
+===========================
+
+Build:
+  ./packaging/linux/build-deb.sh --version 0.1.0
+  # 产物: packaging/out/poolpilot_<version>_amd64.deb
+
+Install:
+  sudo apt install ./packaging/out/poolpilot_0.1.0_amd64.deb
+
+The service runs as the system user "poolpilot" and stores data in
+/var/lib/poolpilot. The default HTTP endpoint is 0.0.0.0:5274.
+
+Security warning
+----------------
+This package does not terminate TLS. The application session cookie is currently
+issued without the Secure flag. Do not expose port 5274 directly to the public
+Internet. Use a firewall/VPN, or change ASPNETCORE_URLS to 127.0.0.1:5274 and put
+nginx/caddy in front for TLS.
+
+Configuration:
+  /etc/default/poolpilot
+  sudo systemctl restart poolpilot
+
+Public pages are enabled by default in this package:
+  PublicPages__Leads=true
+  PublicPages__Followers=true
+  Set either to false to return its endpoints to 404.
+
+Disable login/registration (public-only deployment):
+  Auth__AccountsEnabled=false
+  This makes /api/auth login/register/MFA and /api/setup return 404. The public
+  header hides the login/register links automatically. Existing session cookies
+  are not revoked by this switch.
+
+Logs:
+  journalctl -u poolpilot -f
+
+Health:
+  curl http://127.0.0.1:5274/api/health

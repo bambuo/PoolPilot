@@ -148,6 +148,11 @@ public sealed record PublicPageStatusDto
     public required bool Leads { get; init; }
 
     public required bool Followers { get; init; }
+
+    /// <summary>
+    /// 是否允许登录/注册。公开-only 部署会把它设为 false，前端据此隐藏入口并拦下认证页。
+    /// </summary>
+    public required bool AccountsEnabled { get; init; }
 }
 
 /// <summary>公开带单页的一行（G1）。</summary>

@@ -1,0 +1,14 @@
+Package: poolpilot
+Version: @VERSION@
+Architecture: amd64
+Maintainer: PoolPilot Maintainers <noreply@poolpilot.invalid>
+Section: net
+Priority: optional
+Installed-Size: @INSTALLED_SIZE@
+Depends: ca-certificates, libc6, libgcc-s1, libssl3 | libssl3t64, libstdc++6, zlib1g
+Description: PoolPilot Lighter pool observation and copy-trading workbench
+ PoolPilot observes Lighter public pools, records paper copy-trading ledgers,
+ and exposes an anonymous public read surface when explicitly enabled.
+ .
+ The package contains a self-contained ASP.NET Core runtime, the built web
+ frontend, and a systemd unit. Application data lives in /var/lib/poolpilot.

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
 
@@ -19,6 +20,7 @@ namespace PoolPilot.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/setup")]
+[AccountsGate]
 public sealed class SetupController(
     GetSetupStatusUseCase setupStatus,
     InitializeNotificationsUseCase initialize,

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
+using PoolPilot.Api.Authorization;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
 
@@ -41,6 +42,7 @@ public sealed class AuthController(
     /// </summary>
     [HttpPost("register/code")]
     [AllowAnonymous]
+    [AccountsGate]
     public async Task<ActionResult<NotificationDeliveryDto>> SendRegistrationCode(
         RegistrationCodeRequestDto request,
         CancellationToken cancellationToken = default)
@@ -58,6 +60,7 @@ public sealed class AuthController(
     /// </summary>
     [HttpPost("register")]
     [AllowAnonymous]
+    [AccountsGate]
     public async Task<IActionResult> Register(
         RegisterRequestDto request,
         CancellationToken cancellationToken = default)
@@ -72,6 +75,7 @@ public sealed class AuthController(
     /// <summary>登录第一步：验邮箱与口令，返回"下一步做什么"（输码 / 扫码绑定）。</summary>
     [HttpPost("login")]
     [AllowAnonymous]
+    [AccountsGate]
     public async Task<ActionResult<LoginResultDto>> Login(
         LoginRequestDto request,
         CancellationToken cancellationToken = default)
@@ -84,6 +88,7 @@ public sealed class AuthController(
     /// <summary>登录第二步（已绑定）：六位码换会话。</summary>
     [HttpPost("mfa/verify")]
     [AllowAnonymous]
+    [AccountsGate]
     public async Task<ActionResult<SessionDto>> VerifyMfa(
         MfaCodeRequestDto request,
         CancellationToken cancellationToken = default)
@@ -99,6 +104,7 @@ public sealed class AuthController(
     /// <summary>登录第二步（未绑定）：验过码即完成绑定，并换到会话。</summary>
     [HttpPost("mfa/bind")]
     [AllowAnonymous]
+    [AccountsGate]
     public async Task<ActionResult<SessionDto>> BindMfa(
         MfaCodeRequestDto request,
         CancellationToken cancellationToken = default)

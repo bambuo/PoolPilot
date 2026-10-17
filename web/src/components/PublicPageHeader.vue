@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { HOME_PATH } from '@/router'
+import { usePublicPageStatus } from '@/composables/usePublicPageStatus'
 import { useSession } from '@/composables/useSession'
 
 /// 公开页的极简头部。**一个组件、两个公开页各引一次**，不改路由结构。
@@ -10,17 +12,28 @@ import { useSession } from '@/composables/useSession'
 /// 匿名访客既没有它、也不该看见它——点进去只会被守卫送去登录页。
 /// 页面只给公开两页的页签和"登录/注册 或 回工作台"这一个出口。
 ///
-/// 登录/注册入口由 `VITE_SHOW_AUTH_LINKS` 控制：未设置时默认显示，
-/// 显式设为 `false`（或 `0`）时隐藏。Vite 的环境变量在构建时内联，
-/// 所以改完要重新构建；开发期则重启 Vite。
+/// 登录/注册入口由两件事共同决定：
+/// · 构建时 `VITE_SHOW_AUTH_LINKS`（默认显示，false/0 隐藏）；
+/// · 运行时 `/api/public/status` 的 `accountsEnabled`（服务端关闭登录/注册时为 false）。
+/// 后者让 public-only 部署不必为了藏按钮而重新构建；构建时变量则给纯静态定制留出口。
 ///
 /// 页签高亮按 name 精确判定而不是路径前缀：公开两页是平级兄弟路由，
 /// 包含式匹配（router-link-active）在这里没有额外信息，不如写死两个名字。
 const { user } = useSession()
 const route = useRoute()
+const pageStatus = usePublicPageStatus()
 
 const authLinksSetting = (import.meta.env.VITE_SHOW_AUTH_LINKS ?? '').trim().toLowerCase()
-const showAuthLinks = authLinksSetting !== 'false' && authLinksSetting !== '0'
+const authLinksConfigured = authLinksSetting !== 'false' && authLinksSetting !== '0'
+
+const showAuthLinks = computed(
+  () => authLinksConfigured && pageStatus.status.value?.accountsEnabled !== false,
+)
+
+// 头部自己也要保证状态已经问过一次：公开页通常已经调用，但组件不应依赖调用顺序。
+onMounted(() => {
+  void pageStatus.load()
+})
 
 const tabs = [
   { name: 'public-leads', label: '带单广场' },

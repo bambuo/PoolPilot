@@ -13,12 +13,12 @@ namespace PoolPilot.Api.Controllers;
 /// 在浏览器里长得一模一样。没有这个读口时，生产默认（两片都关）下匿名访客会永远停在
 /// "实时数据连接中…"；有了它，页面可以先问一句再决定是建连还是显示"未启用"。
 ///
-/// 它**不挂功能开关**（两片都关也必须能回答），不读库、不打上游，只回两个布尔；
+/// 它**不挂功能开关**（两片都关也必须能回答），不读库、不打上游，只回三个布尔；
 /// 也没有限流——它不产生数据，不值得占读额度。
 /// </summary>
 [ApiController]
 [Route("api/public")]
-public sealed class PublicStatusController(PublicPageSettings settings) : ControllerBase
+public sealed class PublicStatusController(PublicPageSettings settings, AuthSettings auth) : ControllerBase
 {
     [HttpGet("status")]
     [AllowAnonymous]
@@ -26,5 +26,6 @@ public sealed class PublicStatusController(PublicPageSettings settings) : Contro
     {
         Leads = settings.Leads,
         Followers = settings.Followers,
+        AccountsEnabled = auth.AccountsEnabled,
     });
 }

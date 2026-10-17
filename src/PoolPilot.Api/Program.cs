@@ -104,17 +104,19 @@ public sealed class Program
         // ── 持久化 ──────────────────────────────────────────────
         // 只存无法重新获取的东西：监控到的事件流与跟单对照记录。
         // 池元数据、净值、快照都能随时从上游重拉，不落库。
-        string dbPath = Path.Combine(
+        //
+        // 数据目录可由 PoolPilot:DataDirectory（环境变量 PoolPilot__DataDirectory）指定；
+        // 未配置时保持历史口径 ContentRootPath/../../data。deb 包把它指向 /var/lib/poolpilot，
+        // 让服务账号只对数据目录有写权限，安装目录保持只读。
+        string dataDirectory = DatabasePath.ResolveDataDirectory(
             builder.Environment.ContentRootPath,
-            "..",
-            "..",
-            "data",
-            "poolpilot.db");
+            builder.Configuration[DatabasePath.DataDirectoryConfigurationKey]);
+        string dbPath = Path.Combine(dataDirectory, DatabasePath.FileName);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(dbPath))!);
+        Directory.CreateDirectory(dataDirectory);
 
         builder.Services.AddDbContext<PoolPilotDbContext>(options =>
-            options.UseSqlite($"Data Source={Path.GetFullPath(dbPath)}"));
+            options.UseSqlite($"Data Source={dbPath}"));
 
         builder.Services.AddScoped<IPoolEventRepository, PoolEventRepository>();
         builder.Services.AddScoped<ICopyFillRepository, CopyFillRepository>();
@@ -207,6 +209,10 @@ public sealed class Program
         // 应用层因此不依赖任何配置包；代码里的默认值是两条 false（默认不公开）
         builder.Services.AddSingleton(
             builder.Configuration.GetSection("PublicPages").Get<PublicPageSettings>() ?? new PublicPageSettings());
+
+        // 登录/注册总开关：公开-only 部署可以关掉新登录、新注册、MFA 与首次初始化。
+        builder.Services.AddSingleton(
+            builder.Configuration.GetSection("Auth").Get<AuthSettings>() ?? new AuthSettings());
 
         // "公开页的调用者是谁"——会话用户 + 访客 Cookie。只有表现层读得懂这两样
         builder.Services.AddScoped<PublicCallerAccessor>();
@@ -392,6 +398,11 @@ public sealed class Program
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
 
+        // deb 包里 web/dist 会放在 wwwroot：生产环境由 Kestrel 直接托管前端。
+        // 静态资源与 API 的授权无关，放在认证之前；开发期 wwwroot 不存在时这两个中间件是空操作。
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
+
         // 限流排在认证之前：公开页的匿名流量根本不该先去解一遍 Cookie。
         // 顺序对正确性没有影响（拒绝由 OnRejected 自己写响应），只是少做无用功
         app.UseRateLimiter();
@@ -423,6 +434,33 @@ public sealed class Program
             service = "PoolPilot",
             upstream = LighterConstants.MainnetRestBaseUrl,
         })).AllowAnonymous();
+
+        // SPA 回退：只接客户端路由（/login、/public/leads 等刷新直达）。
+        // **不能**用无差别 MapFallbackToFile：那会把拼错的 /api/... 也回成 200 HTML，
+        // 让调用方把"接口不存在"误判成"服务正常"。API 与 Hub 的未匹配路径保持 JSON 404。
+        app.MapFallback(async context =>
+        {
+            string? webRoot = app.Environment.WebRootPath;
+            string indexPath = Path.Combine(webRoot ?? string.Empty, "index.html");
+
+            // 只有 GET/HEAD 的客户端路由才该拿 index；POST 到不存在的路径仍然是 404。
+            bool isClientRouteMethod =
+                HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method);
+
+            if (!isClientRouteMethod
+                || context.Request.Path.StartsWithSegments("/api")
+                || context.Request.Path.StartsWithSegments("/hubs")
+                || webRoot is null
+                || !File.Exists(indexPath))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                await context.Response.WriteAsJsonAsync(new { error = "Not Found" }).ConfigureAwait(false);
+                return;
+            }
+
+            context.Response.ContentType = "text/html; charset=utf-8";
+            await context.Response.SendFileAsync(indexPath).ConfigureAwait(false);
+        });
 
         app.Run();
     }

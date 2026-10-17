@@ -1,0 +1,16 @@
+# 只在打包镜像里用的构建上下文过滤：不要把本地数据库、依赖目录和构建产物带进去。
+.git
+.github
+.idea
+.vscode
+.codex
+.zcode
+.dev-logs
+data
+**/bin
+**/obj
+**/node_modules
+web/dist
+packaging/out
+*.deb
+*.user

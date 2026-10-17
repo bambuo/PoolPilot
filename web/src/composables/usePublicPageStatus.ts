@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { describePublicError, publicApi, type PublicPageStatus } from '@/api/public'
 
 /// 公开面两页的开关状态。模块级单例（与 useSession / usePublicStream 同一形制）：
-/// 两页拿的是同一份 `{ leads, followers }`，一次读取即可。
+/// 两页拿的是同一份 `{ leads, followers, accountsEnabled }`，一次读取即可。
 ///
 /// 为什么需要它：EventSource 看不到 404 的响应体，"这一页没开放"与"实时流正在连接"
 /// 在浏览器里长得一模一样。生产默认两片都关，没有这个读口时匿名访客会永远停在

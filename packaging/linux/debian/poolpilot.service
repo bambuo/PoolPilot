@@ -1,0 +1,41 @@
+[Unit]
+Description=PoolPilot
+Documentation=file:/usr/share/doc/poolpilot/README.Debian
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=poolpilot
+Group=poolpilot
+WorkingDirectory=/opt/poolpilot/api
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=HOME=/var/lib/poolpilot
+Environment=DOTNET_NOLOGO=1
+# 这两项与环境文件重复是刻意的：即使 /etc/default/poolpilot 被误删，
+# 服务仍然找得到可写的数据目录、监听约定的端口；环境文件里的值会覆盖它们。
+Environment=ASPNETCORE_URLS=http://0.0.0.0:5274
+Environment=PoolPilot__DataDirectory=/var/lib/poolpilot
+EnvironmentFile=-/etc/default/poolpilot
+ExecStart=/opt/poolpilot/api/PoolPilot.Api
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillSignal=SIGINT
+SyslogIdentifier=poolpilot
+
+# 数据目录：SQLite、WAL、DataProtection keys。服务账号对其它路径只读。
+StateDirectory=poolpilot
+StateDirectoryMode=0700
+UMask=0077
+ReadWritePaths=/var/lib/poolpilot
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

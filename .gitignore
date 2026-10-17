@@ -33,6 +33,10 @@ secrets*.json
 # 本地起服务时的输出（后端 / 前端各一份）
 .dev-logs/
 
+# Linux 包构建产物
+packaging/out/
+*.deb
+
 # 编码助手的会话产物（计划、临时脚本、本机 MCP 配置等），与项目本身无关
 .zcode/
 .codex/
