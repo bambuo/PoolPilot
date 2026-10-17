@@ -79,6 +79,13 @@ export interface PublicFollowerPosition {
   notional: number
   unrealizedPnl: number
   realizedPnl: number
+  initialMarginPercent: number | null
+  marginAmount: number | null
+  /** 维持保证金率（百分数）；未知为 0。 */
+  maintenanceMarginPercent: number
+  unrealizedPnlPercent: number | null
+  liquidationPrice: number | null
+  liquidationDistancePercent: number | null
   trackingDeviationPercent: number
 }
 
@@ -94,6 +101,8 @@ export interface PublicFollowerFill {
   notional: number
   fee: number
   realizedPnl: number
+  initialMarginPercent: number | null
+  isReducing: boolean
   isFilled: boolean
   skipReason: string | null
   observedAt: string
@@ -154,9 +163,28 @@ export interface PublicLeadPosition {
   marketId: number
   symbol: string
   side: 'long' | 'short'
+  avgEntryPrice: number
+  markPrice: number
+  liquidationPrice: number | null
   notional: number
   /** 该仓位占总敞口的比例（百分数）。 */
   weightPercent: number
+  /** 近端成交窗口内已平仓轮次的毛利合计；上游持仓不提供逐仓已实现盈亏。 */
+  realizedPnl: number
+  unrealizedPnl: number
+  /** 未实现盈亏 ÷ 保证金；取不到保证金率时为 null。 */
+  unrealizedPnlPercent: number | null
+}
+
+/** 带单员详情里持仓市场的挂单（只用于持仓行展开区）。 */
+export interface PublicLeadOrder {
+  marketId: number
+  orderIndex: number
+  side: 'buy' | 'sell'
+  price: number
+  remainingSize: number
+  remainingNotional: number
+  isPartiallyFilled: boolean
 }
 
 /** 带单员详情里的净值点。 */
@@ -166,10 +194,9 @@ export interface PublicLeadNavPoint {
 }
 
 /**
- * 带单员（池）详情：从工作台池详情精选出来的公开投影。
+ * 带单员（池）详情：与工作台共用同一套展示模型，由公开窄 DTO 提供数据。
  *
- * 刻意不携带挂单、逐笔成交、清算价、运营者钱包地址——匿名观察需要的是
- * "这个池值不值得跟"，不是可被用来抢先交易的执行细节。
+ * 不携带逐笔成交与运营者钱包地址；只给前几大持仓及其所在市场的挂单。
  */
 export interface PublicLeadDetail {
   accountIndex: number
@@ -196,6 +223,7 @@ export interface PublicLeadDetail {
   metrics: PublicLeadMetrics
   exposure: PublicLeadExposure
   positions: PublicLeadPosition[]
+  orders: PublicLeadOrder[]
   navCurve: PublicLeadNavPoint[]
 }
 

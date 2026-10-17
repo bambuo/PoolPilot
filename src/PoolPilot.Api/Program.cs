@@ -344,6 +344,7 @@ public sealed class Program
         builder.Services.Configure<LeadTraderOptions>(builder.Configuration.GetSection("LeadTraders"));
 
         builder.Services.AddSingleton<IMonitorBroadcaster, SignalRMonitorBroadcaster>();
+        builder.Services.AddSingleton<IFollowerLiveBroadcaster, SignalRFollowerLiveBroadcaster>();
         builder.Services.AddSingleton<MarketDataCache>();
         builder.Services.AddSingleton<MarkPriceProvider>();
         builder.Services.AddSingleton<IMarkPrices>(sp => sp.GetRequiredService<MarkPriceProvider>());
@@ -429,6 +430,7 @@ public sealed class Program
         // Hub 也先要登录；"连进来之后能不能收内容"另在 MonitorHub.OnConnectedAsync 里判
         // （menu:graph 的 view，全量广播只能靠拒绝连接挡，见 docs/PERMISSIONS.md 第七节）
         app.MapHub<MonitorHub>("/hubs/monitor").RequireAuthorization();
+        app.MapHub<FollowerHub>("/hubs/followers").RequireAuthorization();
 
         // 健康检查：供前端确认后端已就绪。它必须在**登录之前**可访问——
         // 前端的登录页也要能判断"后端起来了没有"。

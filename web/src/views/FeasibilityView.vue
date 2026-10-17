@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { api, type PoolSummary, type SizeFeasibility } from '@/api/client'
+import SymbolName from '@/components/SymbolName.vue'
 import { filterPoolOption, poolOptionLabel } from '@/utils/poolOptions'
 import { formatNumber, formatPercent, formatUsd } from '@/utils/format'
 
@@ -150,9 +151,9 @@ onMounted(async () => {
           :pagination="false"
         >
           <template #columns>
-            <a-table-column title="市场" :width="110">
+            <a-table-column title="市场" :width="140">
               <template #cell="{ record }">
-                {{ record.symbol }}
+                <SymbolName :symbol="record.symbol" />
                 <span style="color: var(--color-text-3); font-size: 11px">#{{ record.marketId }}</span>
               </template>
             </a-table-column>

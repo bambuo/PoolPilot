@@ -3,6 +3,7 @@ import { Message } from '@arco-design/web-vue'
 import { useRouter } from 'vue-router'
 
 import { authApi } from '@/api/client'
+import { disconnectFollowerHub } from '@/composables/useFollowerLive'
 import { disconnectMonitorHub } from '@/composables/useMonitorHub'
 import { useMenu } from '@/composables/useMenu'
 import { usePermission } from '@/composables/usePermission'
@@ -26,9 +27,10 @@ export function useSignOut() {
     try {
       await authApi.logout()
 
-      // 先断开监控连接再清会话：那条连接带着刚才的 Cookie，
-      // 留着它会在服务端变成一串没人认领的 401
+      // 先断开实时连接再清会话：这些连接带着刚才的 Cookie，
+      // 留着它们会在服务端变成一串没人认领的 401
       await disconnectMonitorHub()
+      await disconnectFollowerHub()
       clearSession()
 
       // 动态路由与权限缓存都跟着这次会话走。不清掉的话，换个账号登录会先看到

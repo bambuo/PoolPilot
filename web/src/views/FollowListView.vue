@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { api, type ExchangeConfigRow, type FollowerSummary, type LeadTrader } from '@/api/client'
+import DirectionMark from '@/components/DirectionMark.vue'
+import SymbolName from '@/components/SymbolName.vue'
+import { useFollowerLive, subscribeFollowerMarkets } from '@/composables/useFollowerLive'
 import { usePermission } from '@/composables/usePermission'
 import { COPY_MODES, DEFAULT_COPY_MODE, copyModeLabel, type CopyMode } from '@/domain/copyMode'
 import { formatPercent, formatNumber, formatUsd } from '@/utils/format'
@@ -43,6 +46,80 @@ const followers = ref<FollowerSummary[]>([])
 const leads = ref<LeadTrader[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
+
+/// 实时通道：账本变化 → 重取列表；行情 tick → 本地重算卡片估值，不打 REST。
+const { state: liveState } = useFollowerLive({
+  onChanged: scheduleReload,
+  onMarketPrice: applyMarketPrice,
+})
+
+let reloadTimer: number | null = null
+
+const liveNote = computed(() => {
+  if (liveState.value === 'reconnecting') return '实时连接已断开，正在重连'
+  if (liveState.value === 'connected') return '实时更新'
+  if (liveState.value === 'connecting') return '正在连接实时更新'
+
+  return '实时通道未连接'
+})
+
+function scheduleReload(): void {
+  if (reloadTimer !== null) {
+    window.clearTimeout(reloadTimer)
+  }
+
+  reloadTimer = window.setTimeout(() => {
+    reloadTimer = null
+    void load(true)
+  }, 250)
+}
+
+/// 行情 tick 的本地补丁：口径与后端盯市一致（未实现 = 数量 ×（现价 − 开仓价））。
+function applyMarketPrice(marketId: number, price: number): void {
+  followers.value = followers.value.map((follower) => {
+    if (follower.mode === 'live' || !follower.isValuationAvailable) {
+      return follower
+    }
+
+    let changed = false
+    const positions = follower.positions.map((position) => {
+      if (position.marketId !== marketId) return position
+
+      changed = true
+      const notional = Math.abs(position.size) * price
+      return {
+        ...position,
+        notional,
+        unrealizedPnl: position.size * (price - position.entryVwap),
+      }
+    })
+
+    if (!changed) return follower
+
+    const unrealizedPnl = positions.reduce((sum, p) => sum + p.unrealizedPnl, 0)
+    const grossNotional = positions.reduce((sum, p) => sum + p.notional, 0)
+    const equity = follower.initialCapital + follower.realizedPnl + unrealizedPnl - follower.fees
+
+    return {
+      ...follower,
+      positions,
+      unrealizedPnl,
+      grossNotional,
+      equity,
+      returnPercent:
+        follower.initialCapital > 0
+          ? ((equity - follower.initialCapital) / follower.initialCapital) * 100
+          : 0,
+    }
+  })
+}
+
+onUnmounted(() => {
+  if (reloadTimer !== null) {
+    window.clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
+})
 
 /// 带单员列表取失败的原因。**不能静默吞掉**：吞掉的后果是"开始跟单"弹窗里
 /// 空空一个"暂无数据"，看起来像"没有任何带单员"，而事实是这次请求失败了。
@@ -129,16 +206,26 @@ async function loadExchanges(): Promise<void> {
   }
 }
 
-async function load(): Promise<void> {
-  loading.value = true
-  errorMessage.value = ''
+async function load(silent = false): Promise<void> {
+  if (!silent) {
+    loading.value = true
+    errorMessage.value = ''
+  }
 
   try {
     // 跟单员先到就先渲染卡片。池名来自后端（带单员表里存了名字快照），
     // 所以这里不再需要为了显示名字去拉一次 90KB 的池列表。
     followers.value = await api.followers()
+
+    // 行情按市场分组推送：把卡片上正在展示的市场都登记进来。
+    subscribeFollowerMarkets(
+      followers.value.flatMap((follower) => follower.positions.map((position) => position.marketId)),
+    )
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    // 静默重取失败时保留上一次的数据：实时事件是一次补刷新，不该把已经能看的页面清空
+    if (!silent) {
+      errorMessage.value = error instanceof Error ? error.message : String(error)
+    }
   } finally {
     loading.value = false
   }
@@ -229,7 +316,10 @@ onMounted(async () => {
       <!-- 右上角只留「刷新」：开始跟单的入口**只有**列表里那张虚线卡片一处
            （与「交易所」页同一口径）。两处入口含义完全一样，多一个只会让人犹豫"点哪个" -->
       <template #extra>
-        <a-button size="small" :loading="loading" @click="load">刷新</a-button>
+        <a-space :size="8">
+          <span class="live-note">{{ liveNote }}</span>
+          <a-button size="small" :loading="loading" @click="load()">刷新</a-button>
+        </a-space>
       </template>
 
       <a-alert v-if="errorMessage" type="error" :title="errorMessage" />
@@ -329,12 +419,16 @@ onMounted(async () => {
                       :key="position.venueSymbol"
                       class="position-row"
                     >
-                      <span>
-                        <a-tag size="small" :color="position.positionSide === 'SHORT' ? 'red' : 'green'">
-                          {{ position.positionSide === 'SHORT' ? '空' : '多' }}
-                        </a-tag>
-                        {{ position.pair ?? position.venueSymbol }}
-                        {{ formatNumber(position.size, 4) }}
+                      <span class="position-main">
+                        <DirectionMark
+                          :side="position.positionSide === 'SHORT' ? 'short' : 'long'"
+                          :size="12"
+                        />
+                        <SymbolName
+                          :symbol="(position.pair ?? position.venueSymbol).split('/')[0] ?? position.venueSymbol"
+                          compact
+                        />
+                        <span class="position-size">{{ formatNumber(position.size, 4) }}</span>
                       </span>
                       <span
                         :style="{
@@ -354,11 +448,10 @@ onMounted(async () => {
                 <template v-else>
                   <template v-if="follower.positions.length > 0">
                     <div v-for="position in follower.positions" :key="position.symbol" class="position-row">
-                      <span>
-                        <a-tag size="small" :color="position.side === 'long' ? 'green' : 'red'">
-                          {{ position.side === 'long' ? '多' : '空' }}
-                        </a-tag>
-                        {{ position.symbol }} {{ formatNumber(position.size, 1) }}
+                      <span class="position-main">
+                        <DirectionMark :side="position.side" :size="12" />
+                        <SymbolName :symbol="position.symbol" compact />
+                        <span class="position-size">{{ formatNumber(position.size, 1) }}</span>
                       </span>
                       <span
                         :style="{
@@ -558,6 +651,11 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.live-note {
+  font-size: 12px;
+  color: var(--color-text-3);
+}
+
 /* 只在该页确实有被禁用的按钮时才显示（见模板里的判断） */
 .readonly-line {
   margin-top: 10px;
@@ -687,6 +785,19 @@ onMounted(async () => {
 
   /* 行高固定：否则"两行的高度"这种算法不成立，标签换行还会把视口撑破 */
   height: var(--position-row-height);
+}
+
+/* 方向三角、标的图标、数量放在同一条水平线上；
+   三者间距由 gap 统一给，不再靠文本空格（空格在不同字体下宽度不一致） */
+.position-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.position-size {
+  font-variant-numeric: tabular-nums;
 }
 
 /* 超过两行：自动上下滚动（跑马灯）。

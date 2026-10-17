@@ -31,6 +31,12 @@ public sealed record InstrumentSpec
     /// <summary>挂单费率（百分数）。</summary>
     public required decimal MakerFeePercent { get; init; }
 
+    /// <summary>
+    /// 维持保证金率（百分数）。上游 <c>maintenance_margin_fraction</c> 的整数刻度 ÷ 100。
+    /// 纸面清算价要用它：爆仓由维持保证金触发，与初始保证金率（杠杆）不是同一个数。
+    /// </summary>
+    public required decimal MaintenanceMarginPercent { get; init; }
+
     /// <summary>往返吃单费率（百分数）。</summary>
     public decimal RoundTripTakerFeePercent => TakerFeePercent * 2m;
 }

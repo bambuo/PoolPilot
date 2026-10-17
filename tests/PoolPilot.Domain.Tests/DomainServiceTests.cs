@@ -505,6 +505,7 @@ public sealed class SizeFeasibilityEvaluatorTests
         PriceDecimals = 5,
         TakerFeePercent = 0m,
         MakerFeePercent = 0m,
+        MaintenanceMarginPercent = 6m,
     };
 
     [TestMethod]

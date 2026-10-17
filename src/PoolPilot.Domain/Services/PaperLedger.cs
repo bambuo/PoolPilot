@@ -339,10 +339,56 @@ public static class PaperLedger
                 RealizedPnl = UsdAmount.From((existing?.RealizedPnl.Value ?? 0m) + fill.RealizedPnl.Value),
                 Fees = UsdAmount.From((existing?.Fees.Value ?? 0m) + fill.Fee.Value),
                 FillCount = (existing?.FillCount ?? 0) + 1,
+                InitialMarginPercent = ResolveInitialMarginPercent(existing, fill),
             };
         }
 
         return new PaperBook { Positions = book };
+    }
+
+    /// <summary>
+    /// 仓位的初始保证金率：建仓/加仓取源池当时的值，减仓保持原值。
+    ///
+    /// 加仓时按**成交名义额加权**，因为保证金占用 = 名义价值 × 保证金率；
+    /// 两次不同杠杆的加仓不能简单取最后一个，否则旧仓位的保证金会被新值覆盖。
+    /// 旧流水没有记录保证金率时返回 null，由读取层退回源池当前值。
+    /// </summary>
+    private static decimal? ResolveInitialMarginPercent(PaperPosition? existing, PaperFill fill)
+    {
+        decimal after = fill.PositionAfter.Value;
+        decimal? existingPercent = existing?.InitialMarginPercent;
+        decimal? fillPercent = fill.InitialMarginPercent;
+
+        if (after == 0m)
+        {
+            return null;
+        }
+
+        if (existing is null || existing.Size.IsFlat || !existing.Size.HasSameDirectionAs(fill.PositionAfter))
+        {
+            return fillPercent ?? existingPercent;
+        }
+
+        decimal before = Math.Abs(existing.Size.Value);
+        decimal now = Math.Abs(after);
+
+        if (now <= before)
+        {
+            return existingPercent ?? fillPercent;
+        }
+
+        if (existingPercent is null || fillPercent is null)
+        {
+            return existingPercent ?? fillPercent;
+        }
+
+        decimal oldNotional = before * existing.EntryVwap.Value;
+        decimal addedNotional = fill.Notional.Value;
+        decimal total = oldNotional + addedNotional;
+
+        return total <= 0m
+            ? fillPercent
+            : (oldNotional * existingPercent.Value + addedNotional * fillPercent.Value) / total;
     }
 
     /// <summary>盯市估值。<paramref name="marks"/> 缺失的市场按开仓均价估（即未实现盈亏为 0）。</summary>

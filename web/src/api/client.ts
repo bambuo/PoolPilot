@@ -568,6 +568,18 @@ export interface PaperPosition {
   notional: number
   unrealizedPnl: number
   realizedPnl: number
+  /** 源池初始保证金率；旧流水且源池无持仓时为 null。 */
+  initialMarginPercent: number | null
+  /** 保证金占用额；保证金率不可得时为 null。 */
+  marginAmount: number | null
+  /** 维持保证金率（百分数）；未知为 0。行情补丁本地重算清算价要用。 */
+  maintenanceMarginPercent: number
+  /** 未实现盈亏 ÷ 保证金（百分数）。 */
+  unrealizedPnlPercent: number | null
+  /** 账户级清算价；不存在正数解时为 null。 */
+  liquidationPrice: number | null
+  /** 距清算幅度（百分数，空头为正、多头为负）。 */
+  liquidationDistancePercent: number | null
   /** 池子在市场的带符号仓位。 */
   poolSize: number
   /** 按比例复制并量化到交易所步长后，我方应该持有的数量。 */
@@ -587,6 +599,8 @@ export interface PaperFill {
   notional: number
   fee: number
   realizedPnl: number
+  initialMarginPercent: number | null
+  isReducing: boolean
   isFilled: boolean
   skipReason: 'below_minimum_size' | 'below_minimum_notional' | 'no_liquidity' | null
   depthSufficient: boolean
@@ -641,9 +655,11 @@ export interface Follower {
 
 /** 卡片上的持仓摘要。 */
 export interface PaperPositionBrief {
+  marketId: number
   symbol: string
   side: 'long' | 'short' | null
   size: number
+  entryVwap: number
   notional: number
   unrealizedPnl: number
   trackingDeviationPercent: number
@@ -768,6 +784,8 @@ export interface FollowerSummary {
   returnPercent: number
   realizedPnl: number
   unrealizedPnl: number
+  /** 累计手续费；行情补丁重算权益用。 */
+  fees: number
   scale: number
   poolEquity: number
   grossNotional: number

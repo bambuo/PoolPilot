@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import type { PublicFollower, PublicFollowerPosition, PublicFollowerSummary } from '@/api/public'
-import LineChart from '@/components/LineChart.vue'
-import MetricTile from '@/components/MetricTile.vue'
+import type { PublicFollower, PublicFollowerSummary } from '@/api/public'
+import FollowerEquityChart from '@/components/FollowerEquityChart.vue'
+import FollowerFillsTable from '@/components/FollowerFillsTable.vue'
+import FollowerOverview from '@/components/FollowerOverview.vue'
+import FollowerPositionsTable from '@/components/FollowerPositionsTable.vue'
 import { useFollowerDetail } from '@/composables/usePublicStream'
+import type {
+  FollowerFillRow,
+  FollowerMetric,
+  FollowerPositionRow,
+} from '@/domain/followerDetail'
 import { formatDateTime, formatLocalDateTime, formatLocalTime, formatNumber, formatPercent, formatUsd } from '@/utils/format'
 
 /// 公开跟单详情（G3 的实时版）：卡片点开后订阅 /api/public/stream?detail=<id>，
@@ -72,18 +79,119 @@ const liveNote = computed(() => {
   return `实时更新 · ${formatLocalTime(new Date(lastUpdatedAt.value).toISOString())}`
 })
 
-/// 权益曲线：基准线画在初始本金上——高于它才是赚的（与工作台同口径）。
-const equitySeries = computed(() => {
+/// 总览：六格与工作台同槽位；公开面只有纸面，所以标签固定为纸面口径。
+const metrics = computed<FollowerMetric[]>(() => {
   const f = follower.value
-  if (f === null || f.curve.length === 0) return []
+  if (f === null) return []
 
   return [
     {
       label: '账户权益',
-      color: 'rgb(var(--primary-6))',
-      values: f.curve.map((point) => point.equity),
+      value: formatUsd(f.equity, 4),
+      note: `本金 ${formatUsd(f.initialCapital)}`,
+      tone: f.equity >= f.initialCapital ? 'success' : 'danger',
+    },
+    {
+      label: '收益率',
+      value: formatPercent(f.returnPercent, 4),
+      note: formatUsd(f.equity - f.initialCapital, 4),
+      tone: f.returnPercent >= 0 ? 'success' : 'danger',
+    },
+    {
+      label: '未实现盈亏',
+      value: formatUsd(f.unrealizedPnl, 4),
+      note: f.marksUnavailable.length > 0 ? '含取不到价的标的' : '按盘口中间价盯市',
+      tone: f.marksUnavailable.length > 0 ? 'warning' : 'default',
+    },
+    { label: '持仓名义价值', value: formatUsd(f.grossNotional), note: '总敞口' },
+    { label: '已实现盈亏', value: formatUsd(f.realizedPnl, 4), note: '平仓部分结转' },
+    {
+      label: '成交 / 跳过',
+      value: `${f.fillCount} / ${f.skipCount}`,
+      note: f.skipCount > 0 ? '跳过 = 带单员动了没跟上' : '全部跟上',
+      tone: f.skipCount > 0 ? 'warning' : 'success',
     },
   ]
+})
+
+const positionRows = computed<FollowerPositionRow[]>(() => {
+  const f = follower.value
+  if (f === null) return []
+
+  return f.positions
+    .filter((position) => position.size !== 0)
+    .map((position) => {
+      const unavailable = !position.hasMark && position.size !== 0
+
+      return {
+        key: String(position.marketId),
+        symbol: position.symbol,
+        side: position.side,
+        sizeText: formatNumber(position.size, 6),
+        entryText: formatNumber(position.entryVwap, 6),
+        markText: position.hasMark ? formatNumber(position.markPrice, 6) : null,
+        liquidationText:
+          position.liquidationPrice === null
+            ? null
+            : formatNumber(position.liquidationPrice, 6),
+        notionalText: formatUsd(position.notional),
+        unrealizedText: unavailable ? '不可得' : formatUsd(position.unrealizedPnl, 4),
+        unrealizedTone: unavailable ? 'neutral' : position.unrealizedPnl >= 0 ? 'profit' : 'loss',
+        returnText:
+          position.unrealizedPnlPercent === null
+            ? null
+            : formatPercent(position.unrealizedPnlPercent, 2),
+        returnTone:
+          position.unrealizedPnlPercent === null
+            ? 'neutral'
+            : position.unrealizedPnlPercent >= 0
+              ? 'profit'
+              : 'loss',
+        realizedText: formatUsd(position.realizedPnl, 4),
+      }
+    })
+})
+
+const fillRows = computed<FollowerFillRow[]>(() => {
+  const f = follower.value
+  if (f === null) return []
+
+  return f.fills.map((fill) => {
+    const reduceMargin =
+      fill.isFilled
+      && fill.isReducing
+      && fill.initialMarginPercent !== null
+      && fill.initialMarginPercent > 0
+        ? Math.abs(fill.notional) * fill.initialMarginPercent / 100
+        : 0
+    const reduceReturn = reduceMargin > 0 ? (fill.realizedPnl / reduceMargin) * 100 : null
+
+    return {
+      key: String(fill.id),
+      atText: formatDateTime(fill.observedAt),
+      symbol: fill.symbol,
+      action: fill.isFilled && fill.side ? { side: fill.side } : null,
+      quantityText: fill.isFilled ? formatNumber(fill.size, 6) : '—',
+      priceText: formatNumber(fill.price, 6),
+      notionalText: formatUsd(fill.notional),
+      result: {
+        label: fill.isFilled ? '已成交' : '未跟上',
+        color: fill.isFilled ? 'green' : 'orange',
+      },
+      realizedText: formatUsd(fill.realizedPnl, 4),
+      fillReturnText: reduceReturn === null ? undefined : formatPercent(reduceReturn, 2),
+      fillReturnTone:
+        reduceReturn === null ? undefined : reduceReturn >= 0 ? 'profit' : 'loss',
+      note: !fill.isFilled && fill.skipReason ? skipReasonLabel(fill.skipReason) : undefined,
+    }
+  })
+})
+
+const equityEmptyText = computed(() => {
+  const f = follower.value
+  if (f === null) return '还没有权益点'
+
+  return f.curve.length === 0 ? '还没有权益点' : '目前只有 1 个权益点，画不出趋势'
 })
 
 /// 跳过原因的中文标签。公开契约把 skipReason 定为自由字符串，已知的三种翻成中文，
@@ -96,11 +204,6 @@ function skipReasonLabel(reason: string): string {
   }
 
   return map[reason] ?? reason
-}
-
-/// 该持仓的未实现盈亏是否不可得：取不到价且有仓位时是不可得，不是 0。
-function unrealizedUnavailable(position: PublicFollowerPosition): boolean {
-  return !position.hasMark && position.size !== 0
 }
 
 function closeModal(): void {
@@ -138,58 +241,7 @@ function closeModal(): void {
         </div>
 
         <template v-if="follower.isValuationAvailable">
-          <a-grid :cols="6" :col-gap="12" :row-gap="14">
-            <a-grid-item>
-              <MetricTile
-                label="账户权益"
-                :value="formatUsd(follower.equity, 4)"
-                :note="`本金 ${formatUsd(follower.initialCapital)}`"
-                :tone="follower.equity >= follower.initialCapital ? 'success' : 'danger'"
-              />
-            </a-grid-item>
-            <a-grid-item>
-              <MetricTile
-                label="收益率"
-                :value="formatPercent(follower.returnPercent, 4)"
-                :note="formatUsd(follower.equity - follower.initialCapital, 4)"
-                :tone="follower.returnPercent >= 0 ? 'success' : 'danger'"
-              />
-            </a-grid-item>
-            <a-grid-item>
-              <MetricTile
-                label="未实现盈亏"
-                :value="formatUsd(follower.unrealizedPnl, 4)"
-                :note="
-                  follower.marksUnavailable.length > 0
-                    ? '含取不到价的标的'
-                    : '按盘口中间价盯市'
-                "
-                :tone="follower.marksUnavailable.length > 0 ? 'warning' : 'default'"
-              />
-            </a-grid-item>
-            <a-grid-item>
-              <MetricTile
-                label="持仓名义价值"
-                :value="formatUsd(follower.grossNotional)"
-                note="总敞口"
-              />
-            </a-grid-item>
-            <a-grid-item>
-              <MetricTile
-                label="已实现盈亏"
-                :value="formatUsd(follower.realizedPnl, 4)"
-                note="平仓部分结转"
-              />
-            </a-grid-item>
-            <a-grid-item>
-              <MetricTile
-                label="成交 / 跳过"
-                :value="`${follower.fillCount} / ${follower.skipCount}`"
-                :note="follower.skipCount > 0 ? '跳过 = 带单员动了没跟上' : '全部跟上'"
-                :tone="follower.skipCount > 0 ? 'warning' : 'success'"
-              />
-            </a-grid-item>
-          </a-grid>
+          <FollowerOverview :metrics="metrics" />
 
           <!-- 明细区等真正的详情首帧：摘要只有数值，没有持仓/流水/曲线 -->
           <template v-if="detailReady">
@@ -207,62 +259,11 @@ function closeModal(): void {
           />
 
           <div>
-            <div class="section-title">持仓（{{ follower.positions.length }}）</div>
-            <a-table
-              :data="follower.positions"
-              row-key="marketId"
-              size="small"
-              :bordered="false"
-              :scroll="{ x: 980 }"
-              :pagination="false"
-            >
-              <template #columns>
-                <a-table-column title="标的" data-index="symbol" :width="130" />
-                <a-table-column title="方向" :width="70" align="center">
-                  <template #cell="{ record }">
-                    <a-tag v-if="record.side" size="small" :color="record.side === 'long' ? 'green' : 'red'">
-                      {{ record.side === 'long' ? '多' : '空' }}
-                    </a-tag>
-                    <span v-else class="dim">空仓</span>
-                  </template>
-                </a-table-column>
-                <a-table-column title="数量" :width="110" align="right">
-                  <template #cell="{ record }">{{ formatNumber(record.size, 6) }}</template>
-                </a-table-column>
-                <a-table-column title="开仓均价" :width="140" align="right">
-                  <template #cell="{ record }">{{ formatNumber(record.entryVwap, 6) }}</template>
-                </a-table-column>
-                <a-table-column title="标记价" :width="140" align="right">
-                  <template #cell="{ record }">
-                    <span v-if="record.hasMark">{{ formatNumber(record.markPrice, 6) }}</span>
-                    <span v-else class="dim">取价失败</span>
-                  </template>
-                </a-table-column>
-                <a-table-column title="名义价值" :width="110" align="right">
-                  <template #cell="{ record }">{{ formatUsd(record.notional) }}</template>
-                </a-table-column>
-                <a-table-column title="未实现盈亏" :width="160" align="right">
-                  <template #cell="{ record }">
-                    <span v-if="unrealizedUnavailable(record)" class="dim">不可得</span>
-                    <span
-                      v-else
-                      :style="{
-                        color:
-                          record.unrealizedPnl >= 0 ? 'rgb(var(--success-6))' : 'rgb(var(--danger-6))',
-                      }"
-                    >
-                      {{ formatUsd(record.unrealizedPnl, 4) }}
-                    </span>
-                  </template>
-                </a-table-column>
-                <a-table-column title="已实现盈亏" :width="120" align="right">
-                  <template #cell="{ record }">{{ formatUsd(record.realizedPnl, 4) }}</template>
-                </a-table-column>
-              </template>
-              <template #empty>
-                <a-empty description="我方与池子当前都是空仓" />
-              </template>
-            </a-table>
+            <div class="section-title">持仓（{{ positionRows.length }}）</div>
+            <FollowerPositionsTable
+              :rows="positionRows"
+              empty-text="当前没有持仓"
+            />
           </div>
 
           <div>
@@ -270,65 +271,12 @@ function closeModal(): void {
               流水（最近 {{ follower.fills.length }} 条）
               <span class="section-note">更早的记录不在公开面上提供</span>
             </div>
-            <a-table
-              :data="follower.fills"
-              row-key="id"
-              size="small"
-              :bordered="false"
-              :scroll="{ x: 1000 }"
+            <FollowerFillsTable
+              :rows="fillRows"
+              price-mode="single"
               :pagination="{ pageSize: 10, size: 'small' }"
-            >
-              <template #columns>
-                <a-table-column title="时间" :width="160">
-                  <template #cell="{ record }">{{ formatDateTime(record.observedAt) }}</template>
-                </a-table-column>
-                <a-table-column title="标的" data-index="symbol" :width="100" />
-                <a-table-column title="动作" :width="80" align="center">
-                  <template #cell="{ record }">
-                    <a-tag v-if="record.isFilled && record.side" size="small" :color="record.side === 'buy' ? 'green' : 'red'">
-                      {{ record.side === 'buy' ? '买入' : '卖出' }}
-                    </a-tag>
-                    <span v-else class="dim">—</span>
-                  </template>
-                </a-table-column>
-                <a-table-column title="数量" :width="100" align="right">
-                  <template #cell="{ record }">
-                    {{ record.isFilled ? formatNumber(record.size, 6) : '—' }}
-                  </template>
-                </a-table-column>
-                <a-table-column title="价格" :width="105" align="right">
-                  <template #cell="{ record }">{{ formatNumber(record.price, 6) }}</template>
-                </a-table-column>
-                <a-table-column title="名义价值" :width="95" align="right">
-                  <template #cell="{ record }">{{ formatUsd(record.notional) }}</template>
-                </a-table-column>
-                <a-table-column title="已实现盈亏" :width="105" align="right">
-                  <template #cell="{ record }">{{ formatUsd(record.realizedPnl, 4) }}</template>
-                </a-table-column>
-                <a-table-column title="结果" :width="85" align="center">
-                  <template #cell="{ record }">
-                    <a-tag size="small" :color="record.isFilled ? 'green' : 'orange'">
-                      {{ record.isFilled ? '已成交' : '未跟上' }}
-                    </a-tag>
-                  </template>
-                </a-table-column>
-                <a-table-column title="说明" :width="130">
-                  <template #cell="{ record }">
-                    <span
-                      v-if="!record.isFilled && record.skipReason"
-                      class="note-cell"
-                      :title="skipReasonLabel(record.skipReason)"
-                    >
-                      {{ skipReasonLabel(record.skipReason) }}
-                    </span>
-                    <span v-else class="dim">—</span>
-                  </template>
-                </a-table-column>
-              </template>
-              <template #empty>
-                <a-empty description="还没有任何流水" />
-              </template>
-            </a-table>
+              empty-text="还没有任何流水"
+            />
           </div>
 
           <div>
@@ -336,13 +284,12 @@ function closeModal(): void {
               权益曲线
               <span class="section-note">虚线为初始本金</span>
             </div>
-            <LineChart
-              v-if="follower.curve.length > 1"
-              :series="equitySeries"
-              :baseline="follower.initialCapital"
+            <FollowerEquityChart
+              :points="follower.curve"
+              :initial-capital="follower.initialCapital"
               :height="240"
+              :empty-text="equityEmptyText"
             />
-            <a-empty v-else :description="follower.curve.length === 0 ? '还没有权益点' : '目前只有 1 个权益点，画不出趋势'" />
           </div>
           </template>
         </template>
@@ -397,25 +344,6 @@ function closeModal(): void {
   font-size: 12px;
   font-weight: 400;
   color: var(--color-text-3);
-}
-
-.dim {
-  color: var(--color-text-3);
-}
-
-/* 表格内容一律不折行：列宽已经按最长的日期/数量/金额排过，折行只会把行撑高 */
-:deep(.arco-table-td-content),
-:deep(.arco-table-th-title) {
-  white-space: nowrap;
-}
-
-/* 说明列可能容纳比当前三种更长的跳过原因：越界用省略号，悬停看全文 */
-.note-cell {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .modal-actions {

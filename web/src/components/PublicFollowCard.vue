@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { PublicFollowerSummary } from '@/api/public'
+import DirectionMark from '@/components/DirectionMark.vue'
+import SymbolName from '@/components/SymbolName.vue'
 import { formatDate, formatLocalDateTime, formatNumber, formatPercent, formatUsd } from '@/utils/format'
 
 /// 公开跟单页的一张留言板卡片（G2）。
@@ -85,11 +87,10 @@ const POSITION_ROWS_VISIBLE = 2
         <div class="positions-track">
           <template v-if="follower.positions.length > 0">
             <div v-for="position in follower.positions" :key="position.symbol" class="position-row">
-              <span>
-                <a-tag size="small" :color="position.side === 'long' ? 'green' : 'red'">
-                  {{ position.side === 'long' ? '多' : '空' }}
-                </a-tag>
-                {{ position.symbol }} {{ formatNumber(position.size, 1) }}
+              <span class="position-main">
+                <DirectionMark :side="position.side" :size="12" />
+                <SymbolName :symbol="position.symbol" compact />
+                <span class="position-size">{{ formatNumber(position.size, 1) }}</span>
               </span>
               <span
                 :style="{
@@ -258,6 +259,19 @@ const POSITION_ROWS_VISIBLE = 2
 
   /* 行高固定：否则"两行的高度"这个算法不成立，标签换行还会把视口撑破 */
   height: var(--position-row-height);
+}
+
+/* 方向三角、标的图标、数量放在同一条水平线上；
+   三者间距由 gap 统一给，不再靠文本空格（空格在不同字体下宽度不一致） */
+.position-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.position-size {
+  font-variant-numeric: tabular-nums;
 }
 
 /* 超过两行：自动上下滚动（跑马灯）。用 alternate 来回走，而不是单向循环——

@@ -31,7 +31,39 @@ public sealed record PaperPosition
     /// <summary>该市场累计成交笔数（含减仓）。</summary>
     public required int FillCount { get; init; }
 
+    /// <summary>
+    /// 建仓杠杆的初始保证金率（百分数，25 表示 25%）。加仓按成交名义额加权。
+    /// <c>null</c> = 旧流水没有记录且源池当前也取不到保证金率；此时 ROI 不可得，不拿名义价值冒充。
+    /// </summary>
+    public decimal? InitialMarginPercent { get; init; }
+
     public bool IsFlat => Size.IsFlat;
+
+    /// <summary>按给定盯市价算保证金占用额。取不到保证金率或空仓时为 null。</summary>
+    public UsdAmount? MarginAmountAt(PriceAmount mark)
+    {
+        ArgumentNullException.ThrowIfNull(mark);
+
+        if (InitialMarginPercent is not > 0m || IsFlat)
+        {
+            return null;
+        }
+
+        return UsdAmount.From(NotionalAt(mark).Value * InitialMarginPercent.Value / 100m);
+    }
+
+    /// <summary>
+    /// 按给定盯市价算投资回报率（未实现盈亏 ÷ 保证金，百分数）。
+    /// 保证金取不到时为 null——不退化成 ÷ 名义价值，否则同一列在不同行不是一个量。
+    /// </summary>
+    public PercentValue? UnrealizedPnlPercentAt(PriceAmount mark)
+    {
+        ArgumentNullException.ThrowIfNull(mark);
+
+        return MarginAmountAt(mark) is not { Value: > 0m } margin
+            ? null
+            : PercentValue.FromPercent(UnrealizedPnlAt(mark).Value / margin.Value * 100m);
+    }
 
     /// <summary>按给定盯市价算未实现盈亏。平仓或价格缺失时为 0。</summary>
     public UsdAmount UnrealizedPnlAt(PriceAmount mark)

@@ -11,6 +11,8 @@ import {
 } from '@/api/client'
 import { usePermission } from '@/composables/usePermission'
 import HeaderHint from '@/components/HeaderHint.vue'
+import SymbolName from '@/components/SymbolName.vue'
+import { presetOf } from '@/domain/exchanges'
 import { formatNumber, formatSince } from '@/utils/format'
 
 /// 标的映射 —— 跨交易所的"源标的 → 目标合约"对照表。
@@ -81,6 +83,9 @@ const platformLabel = (code: string): string => {
 
   return labels[code] ?? code
 }
+
+/// 交易所图标随包走（见 domain/exchanges 的 assets），没有图标的兜底项返回 null。
+const platformIcon = (code: string): string | null => presetOf(code).icon
 
 /// 这个平台能不能扫合约清单 / 登记映射。
 ///
@@ -414,12 +419,26 @@ onMounted(async () => {
             :style="{ width: '220px' }"
             @change="onPlatformChanged"
           >
+            <template #prefix>
+              <img
+                v-if="selectedPlatform && platformIcon(selectedPlatform)"
+                class="exchange-icon"
+                :src="platformIcon(selectedPlatform) ?? ''"
+                alt=""
+              />
+            </template>
             <a-option
               v-for="p in platforms"
               :key="p.platform"
               :value="p.platform"
               :label="`${platformLabel(p.platform)}（${p.platform}）`"
             >
+              <img
+                v-if="platformIcon(p.platform)"
+                class="exchange-icon"
+                :src="platformIcon(p.platform) ?? ''"
+                alt=""
+              />
               {{ platformLabel(p.platform) }}
               <span class="mono" style="color: var(--color-text-3)">{{ p.platform }}</span>
               <span v-if="!p.supported"> · 暂无合约目录</span>
@@ -523,6 +542,15 @@ onMounted(async () => {
           <a-table-column title="交易所" :width="170">
             <template #cell="{ record }">
               <a-space :size="6">
+                <img
+                  v-if="platformIcon(record.targetPlatform)"
+                  class="exchange-icon"
+                  :src="platformIcon(record.targetPlatform) ?? ''"
+                  :alt="platformLabel(record.targetPlatform)"
+                />
+                <span v-else class="exchange-icon-fallback">
+                  {{ platformLabel(record.targetPlatform).slice(0, 1) }}
+                </span>
                 <span class="mono">{{ record.targetPlatform }}</span>
                 <a-tag size="small" color="arcoblue">{{ platformLabel(record.targetPlatform) }}</a-tag>
               </a-space>
@@ -532,17 +560,21 @@ onMounted(async () => {
           <!-- 标的是"资产币 / 交易币"两个词，中间不该换行——换行会把它切碎得认不出来 -->
           <a-table-column title="源标的" :width="180">
             <template #cell="{ record }">
-              <span class="pair">
-                <span class="pair-base">{{ record.sourceBase }}</span>
-                <span class="pair-slash">/</span>
-                <span class="pair-quote">{{ record.sourceQuote }}</span>
-              </span>
+              <a-space :size="6">
+                <SymbolName :symbol="record.sourceBase" compact />
+                <span class="pair">
+                  <span class="pair-base">{{ record.sourceBase }}</span>
+                  <span class="pair-slash">/</span>
+                  <span class="pair-quote">{{ record.sourceQuote }}</span>
+                </span>
+              </a-space>
             </template>
           </a-table-column>
 
           <a-table-column title="目标标的" :width="250">
             <template #cell="{ record }">
               <a-space :size="8">
+                <SymbolName :symbol="record.targetBase" compact />
                 <!-- 这一格只放**本系统的标的**（资产币/交易币）。
                      平台自己的合约代码（BTCUSDT、BTC-USDT-SWAP）属于对接实现的细节，
                      不下沉到这张表上：它是"喂给某一家"的写法，不是标的的身份 -->
@@ -669,6 +701,14 @@ onMounted(async () => {
             :disabled="editingId !== null"
             @change="loadFormOptions"
           >
+            <template #prefix>
+              <img
+                v-if="platformIcon(formPlatform)"
+                class="exchange-icon"
+                :src="platformIcon(formPlatform) ?? ''"
+                alt=""
+              />
+            </template>
             <a-option
               v-for="p in platforms"
               :key="p.platform"
@@ -676,6 +716,12 @@ onMounted(async () => {
               :label="`${platformLabel(p.platform)}（${p.platform}）`"
               :disabled="!p.supported"
             >
+              <img
+                v-if="platformIcon(p.platform)"
+                class="exchange-icon"
+                :src="platformIcon(p.platform) ?? ''"
+                alt=""
+              />
               {{ platformLabel(p.platform) }}
               <span class="mono" style="color: var(--color-text-3)">{{ p.platform }}</span>
               <span v-if="!p.supported"> · 暂无合约目录</span>
@@ -874,6 +920,28 @@ onMounted(async () => {
 
 .pair-quote {
   color: var(--color-text-3);
+}
+
+.exchange-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  vertical-align: -3px;
+}
+
+.exchange-icon-fallback {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-fill-2);
+  color: var(--color-text-3);
+  font-size: 9px;
+  font-weight: 600;
 }
 
 .field-label {

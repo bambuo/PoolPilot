@@ -11,11 +11,21 @@ import {
   type LivePosition,
 } from '@/api/client'
 import { useLiveAccount } from '@/composables/useMonitorHub'
+import { useFollowerLive, subscribeFollowerMarkets } from '@/composables/useFollowerLive'
 import { usePermission } from '@/composables/usePermission'
-import HeaderHint from '@/components/HeaderHint.vue'
-import LineChart from '@/components/LineChart.vue'
+import FollowerEquityChart from '@/components/FollowerEquityChart.vue'
+import FollowerFillsTable from '@/components/FollowerFillsTable.vue'
+import FollowerOverview from '@/components/FollowerOverview.vue'
+import FollowerPositionsTable from '@/components/FollowerPositionsTable.vue'
+import DirectionMark from '@/components/DirectionMark.vue'
 import MetricTile from '@/components/MetricTile.vue'
+import SymbolName from '@/components/SymbolName.vue'
 import { copyModeLabel } from '@/domain/copyMode'
+import type {
+  FollowerFillRow,
+  FollowerMetric,
+  FollowerPositionRow,
+} from '@/domain/followerDetail'
 import { formatDateTime, formatNumber, formatPercent, formatUsd } from '@/utils/format'
 
 /// 跟单详情 —— 单个跟单员的影子账户。
@@ -77,6 +87,186 @@ const livePnlTotal = ref<number | null>(null)
 
 /// 每秒推来的标记价（按系统标准标的）：与盈亏同源，都是后端订阅的每秒行情。
 const liveMarksByPair = ref<Record<string, number>>({})
+
+/// 纸面跟单的实时通道：账本/池变化 → 静默重取；行情 tick → 本地重算持仓与权益。
+const { state: followerLiveState } = useFollowerLive({
+  onChanged: (changedId) => {
+    // 0 表示"所有跟单员"（池快照变化）；其余只接受本页这一个
+    if (changedId === 0 || String(changedId) === followerId.value) {
+      scheduleReload()
+    }
+  },
+  onMarketPrice: applyMarketPrice,
+})
+
+let reloadTimer: number | null = null
+
+/// 同一条账本变化会连续来好几条（一次成交、一次池快照、一次权益点），
+/// 合并成一次重取；否则页面会在几秒里反复请求整份详情。
+function scheduleReload(): void {
+  if (reloadTimer !== null) {
+    window.clearTimeout(reloadTimer)
+  }
+
+  reloadTimer = window.setTimeout(() => {
+    reloadTimer = null
+    void load(true)
+  }, 300)
+}
+
+function clearFollowerReload(): void {
+  if (reloadTimer !== null) {
+    window.clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
+}
+
+/// 行情 tick 的本地补丁：口径与后端盯市完全相同
+/// （未实现 = 数量 ×（现价 − 开仓价），保证金 = 名义价值 × 初始保证金率，权益按会计恒等式重算）。
+/// 清算价也跟着变，按全仓口径重解——只让这一笔价格动，其他仓位的占用保持不变。
+function applyMarketPrice(marketId: number, price: number): void {
+  const current = follower.value
+
+  if (current === null || current.mode === 'live') {
+    return
+  }
+
+  let touched = false
+
+  const positions = current.positions.map((position) => {
+    if (position.marketId !== marketId) return position
+
+    touched = true
+
+    const notional = Math.abs(position.size) * price
+    const unrealizedPnl = position.size * (price - position.entryVwap)
+    const margin =
+      position.initialMarginPercent !== null
+      && position.initialMarginPercent > 0
+      && notional > 0
+        ? (notional * position.initialMarginPercent) / 100
+        : null
+
+    return {
+      ...position,
+      markPrice: price,
+      hasMark: true,
+      notional,
+      unrealizedPnl,
+      marginAmount: margin,
+      unrealizedPnlPercent: margin !== null && margin > 0 ? (unrealizedPnl / margin) * 100 : null,
+    }
+  })
+
+  if (!touched) return
+
+  const unrealizedPnl = positions.reduce((sum, position) => sum + position.unrealizedPnl, 0)
+  const grossNotional = positions.reduce((sum, position) => sum + position.notional, 0)
+  const equity = current.initialCapital + current.realizedPnl + unrealizedPnl - current.fees
+
+  follower.value = {
+    ...current,
+    positions: withLiquidationPrices(positions, equity),
+    unrealizedPnl,
+    grossNotional,
+    equity,
+    returnPercent:
+      current.initialCapital > 0
+        ? ((equity - current.initialCapital) / current.initialCapital) * 100
+        : 0,
+    marksUnavailable: current.marksUnavailable.filter((id) => id !== marketId),
+  }
+}
+
+/// 重算每笔仍在仓的清算价。任一在仓市场缺价或缺维持保证金率时整批不动：
+/// 少算一笔占用会把清算价推远，那是危险的方向。
+function withLiquidationPrices(
+  positions: Follower['positions'],
+  equity: number,
+): Follower['positions'] {
+  if (
+    positions.some(
+      (position) =>
+        position.size !== 0 && (!position.hasMark || position.maintenanceMarginPercent <= 0),
+    )
+  ) {
+    return positions
+  }
+
+  return positions.map((position) => {
+    if (position.size === 0) return position
+
+    const liquidation = liquidationPrice(position, positions, equity)
+
+    return {
+      ...position,
+      liquidationPrice: liquidation,
+      liquidationDistancePercent:
+        liquidation === null || position.markPrice <= 0
+          ? null
+          : ((liquidation - position.markPrice) / position.markPrice) * 100,
+    }
+  })
+}
+
+/// 全仓清算价：解 权益(P) = 维持保证金要求(P)。与 `PaperMarginAnalyzer.LiquidationPrice` 同一口径。
+function liquidationPrice(
+  target: Follower['positions'][number],
+  positions: Follower['positions'],
+  equity: number,
+): number | null {
+  if (
+    target.size === 0
+    || target.maintenanceMarginPercent <= 0
+    || target.markPrice <= 0
+  ) {
+    return null
+  }
+
+  const maintenanceRate = target.maintenanceMarginPercent / 100
+  let otherMaintenance = 0
+
+  for (const position of positions) {
+    if (position.marketId === target.marketId || position.size === 0) continue
+
+    if (position.maintenanceMarginPercent <= 0) return null
+
+    otherMaintenance += (position.notional * position.maintenanceMarginPercent) / 100
+  }
+
+  const size = target.size
+  const denominator = size - maintenanceRate * Math.abs(size)
+
+  if (denominator === 0) return null
+
+  const liquidation =
+    (otherMaintenance - equity + target.unrealizedPnl + target.entryVwap * size) / denominator
+
+  if (liquidation <= 0) return null
+
+  // 多头清算价只能低于现价，空头只能高于现价；另一侧的解没有经济含义
+  return size > 0
+    ? liquidation < target.markPrice ? liquidation : null
+    : liquidation > target.markPrice ? liquidation : null
+}
+
+const followerLiveLabel = computed(() => {
+  if (followerLiveState.value === 'connected') return '实时更新'
+  if (followerLiveState.value === 'connecting') return '连接中'
+  if (followerLiveState.value === 'reconnecting') return '重连中'
+
+  return '实时通道未连接'
+})
+
+const followerLiveColor = computed(() =>
+  followerLiveState.value === 'connected' ? 'green' : 'gray',
+)
+
+const followerLiveHint = computed(
+  () =>
+    '仓位、流水与权益变化由服务端推送；盘口价格按市场每秒推送，页面本地重算'
+    + '未实现盈亏、投资回报率与清算价，不需要手动刷新',
+)
 
 const liveChannel = useLiveAccount(
   followerId,
@@ -177,34 +367,39 @@ const unifiedPositions = computed<UnifiedPositionRow[]>(() => {
   if (!f) return []
 
   if (f.mode === 'live') {
-    return (liveAccount.value?.positions ?? []).map((p) => ({
-      key: p.venueSymbol,
-      symbol: p.pair ?? p.venueSymbol,
-      side: p.direction === 'short' ? 'short' : 'long',
-      size: p.size,
-      entry: p.entryPrice,
-      mark: positionMark(p),
-      notional: p.notional,
-      unrealized: (p.pair === null ? undefined : livePnlByPair.value[p.pair]) ?? p.unrealizedPnl,
-      liveReturn: positionReturn(p),
-      paper: null,
-      live: p,
-    }))
+    return (liveAccount.value?.positions ?? [])
+      .filter((p) => p.size !== 0)
+      .map((p) => ({
+        key: p.venueSymbol,
+        symbol: p.pair ?? p.venueSymbol,
+        side: p.direction === 'short' ? 'short' : 'long',
+        size: p.size,
+        entry: p.entryPrice,
+        mark: positionMark(p),
+        notional: p.notional,
+        unrealized: (p.pair === null ? undefined : livePnlByPair.value[p.pair]) ?? p.unrealizedPnl,
+        liveReturn: positionReturn(p),
+        paper: null,
+        live: p,
+      }))
   }
 
-  return f.positions.map((p) => ({
-    key: String(p.marketId),
-    symbol: p.symbol,
-    side: p.side,
-    size: p.size,
-    entry: p.entryVwap,
-    mark: p.hasMark ? p.markPrice : null,
-    notional: p.notional,
-    unrealized: p.unrealizedPnl,
-    liveReturn: null,
-    paper: p,
-    live: null,
-  }))
+  // 后端的并集也包含已平仓/池子有仓但我方空仓的行；持仓表只展示真正持有的仓位。
+  return f.positions
+    .filter((p) => p.size !== 0)
+    .map((p) => ({
+      key: String(p.marketId),
+      symbol: p.symbol,
+      side: p.side,
+      size: p.size,
+      entry: p.entryVwap,
+      mark: p.hasMark ? p.markPrice : null,
+      notional: p.notional,
+      unrealized: p.unrealizedPnl,
+      liveReturn: null,
+      paper: p,
+      live: null,
+    }))
 })
 
 /// 统一流水行：同理合到一张表。行带模式与原始记录，单元格按模式分支
@@ -280,9 +475,11 @@ let liveTimer: number | null = null
 /// 离开页面就停掉定时器：不定时器的组件会在导航之后继续跑，
 /// 那就是一个永远不会被看见、也不会停的后台轮询
 onUnmounted(stopLiveRefresh)
+onUnmounted(clearFollowerReload)
 
 function startLiveRefresh(): void {
-  stopLiveRefresh()
+  // 静默重取会反复走到这里；已经有定时器就不要再重置计时，否则它永远等不到下一次触发
+  if (liveTimer !== null) return
 
   if (follower.value?.mode !== 'live') return
 
@@ -406,19 +603,6 @@ const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
 
-/// 权益曲线。基准线画在初始本金上——高于它才是赚的。
-const equitySeries = computed(() => {
-  if (!follower.value || follower.value.curve.length === 0) return []
-
-  return [
-    {
-      label: '账户权益',
-      color: 'rgb(var(--primary-6))',
-      values: follower.value.curve.map((point) => point.equity),
-    },
-  ]
-})
-
 /// 有持仓却取不到盯市价时，未实现盈亏是不可得的，不是 0。
 const hasUnpricedPosition = computed(() =>
   (follower.value?.positions ?? []).some((p) => !p.hasMark && p.size !== 0),
@@ -439,36 +623,287 @@ const skipReasonLabel = (reason: PaperFillReason): string => {
 
 type PaperFillReason = 'below_minimum_size' | 'below_minimum_notional' | 'no_liquidity'
 
-async function load(): Promise<void> {
-  loading.value = true
-  errorMessage.value = ''
-  notFound.value = false
+/// 六格总览的映射：两种模式共用同一组槽位，实盘把前两格换成了
+/// 钱包余额/可用保证金，并把"规模基准"放回最后一格。
+const metrics = computed<FollowerMetric[]>(() => {
+  const f = follower.value
+  if (f === null) return []
+
+  if (f.mode === 'live') {
+    const counts = liveOrderCounts.value
+
+    return [
+      {
+        label: '钱包余额',
+        value: formatUsd(liveAccount.value?.walletBalance ?? 0, 4),
+        note: `规模基准 ${formatUsd(f.initialCapital)}`,
+      },
+      {
+        label: '可用保证金',
+        value: formatUsd(liveAccount.value?.availableBalance ?? 0, 4),
+        note: '此刻能开仓的钱',
+      },
+      {
+        label: '未实现盈亏',
+        value:
+          accountReturn.value !== null
+            ? `${formatUsd(accountPnl.value, 4)}（${formatPercent(accountReturn.value, 2)}）`
+            : formatUsd(accountPnl.value, 4),
+        note: '按每秒标记价实时计算',
+        tone: accountPnl.value >= 0 ? 'success' : 'danger',
+      },
+      { label: '持仓名义价值', value: formatUsd(accountNotional.value), note: '总敞口' },
+      {
+        label: '下单 / 未跟上',
+        value: `${counts.placed} / ${counts.notFollowed}`,
+        note:
+          counts.notFollowed > 0 ? '未跟上 = 没发或被拒（见流水）' : '全部跟上',
+        tone: counts.notFollowed > 0 ? 'warning' : 'success',
+      },
+      { label: '规模基准', value: formatUsd(f.initialCapital), note: '比例的分母' },
+    ]
+  }
+
+  return [
+    {
+      label: '账户权益',
+      value: formatUsd(f.equity, 4),
+      note: `本金 ${formatUsd(f.initialCapital)}`,
+      tone: f.equity >= f.initialCapital ? 'success' : 'danger',
+    },
+    {
+      label: '收益率',
+      value: formatPercent(f.returnPercent, 4),
+      note: formatUsd(f.equity - f.initialCapital, 4),
+      tone: f.returnPercent >= 0 ? 'success' : 'danger',
+    },
+    {
+      label: '未实现盈亏',
+      value: formatUsd(accountPnl.value, 4),
+      note: hasUnpricedPosition.value ? '含取不到价的标的（不可得）' : '按盘口中间价盯市',
+      tone: hasUnpricedPosition.value ? 'warning' : 'default',
+    },
+    { label: '持仓名义价值', value: formatUsd(accountNotional.value), note: '总敞口' },
+    { label: '已实现盈亏', value: formatUsd(f.realizedPnl, 4), note: '平仓部分结转' },
+    {
+      label: '成交 / 跳过',
+      value: `${f.fillCount} / ${f.skipCount}`,
+      note: f.skipCount > 0 ? '跳过 = 带单员动了但我没跟上' : '全部跟上',
+      tone: f.skipCount > 0 ? 'warning' : 'success',
+    },
+  ]
+})
+
+/// 持仓表映射：共享列先算好显示字符串；实盘原行挂在 live 上供平仓按钮使用。
+const positionRows = computed<FollowerPositionRow[]>(() => {
+  if (follower.value === null) return []
+
+  return unifiedPositions.value.map((position) => {
+    const unavailable = position.mark === null && position.size !== 0
+    const liveHint =
+      position.live && !position.live.pair
+        ? `${position.live.venueSymbol} 不在合约目录里，认不出它是哪个标的`
+        : undefined
+    const paperLiquidation = position.paper?.liquidationPrice ?? null
+    const liquidation =
+      position.live !== null
+        ? position.live.liquidationPrice !== 0
+          ? formatNumber(position.live.liquidationPrice, 6)
+          : null
+        : paperLiquidation === null
+          ? null
+          : formatNumber(paperLiquidation, 6)
+    const returnPercent =
+      position.live !== null
+        ? position.liveReturn
+        : position.paper?.unrealizedPnlPercent ?? null
+
+    return {
+      key: position.key,
+      symbol: position.symbol,
+      symbolHint: liveHint,
+      side: position.side,
+      sizeText: formatNumber(position.size, 6),
+      entryText: formatNumber(position.entry, 6),
+      markText: position.mark === null ? null : formatNumber(position.mark, 6),
+      liquidationText: unavailable ? null : liquidation,
+      notionalText: `$${formatNumber(position.notional, 2)}`,
+      unrealizedText: unavailable ? '不可得' : `$${formatNumber(position.unrealized, 4)}`,
+      unrealizedTone: unavailable ? 'neutral' : position.unrealized >= 0 ? 'profit' : 'loss',
+      returnText: returnPercent === null ? null : formatPercent(returnPercent, 2),
+      returnTone:
+        returnPercent === null ? 'neutral' : returnPercent >= 0 ? 'profit' : 'loss',
+      realizedText: position.paper
+        ? `$${formatNumber(position.paper.realizedPnl, 4)}`
+        : undefined,
+      leverageText: position.live ? `${position.live.leverage}×` : undefined,
+      live: position.live,
+    }
+  })
+})
+
+/// 流水表映射：纸面行单价格、实盘行开/平两列；动作与结果在这里翻成文案，
+/// 共享表只负责按模型渲染。
+const fillRows = computed<FollowerFillRow[]>(() => {
+  if (follower.value === null) return []
+
+  return unifiedRows.value.flatMap<FollowerFillRow>((row) => {
+    if (row.live) {
+      const live = row.live
+      const targetUnknown = live.targetBase === '—'
+
+      return [{
+        key: row.key,
+        atText: formatDateTime(live.createdAt),
+        symbol: targetUnknown ? live.sourceSymbol : live.targetPair,
+        symbolNote: targetUnknown
+          ? '目标未知'
+          : live.sourceSymbol !== live.targetBase && live.sourceSymbol !== '—'
+            ? `源 ${live.sourceSymbol}`
+            : undefined,
+        symbolHint: targetUnknown
+          ? `${live.sourceSymbol} 不在合约目录里，认不出它是哪个标的`
+          : undefined,
+        action:
+          live.intent === 'none'
+            ? null
+            : {
+                text: liveIntentLabel(live.intent),
+                subtext: live.side,
+                tags:
+                  live.trigger === 'manual'
+                    ? [{ label: '手动', color: 'orange' }]
+                    : live.trigger === 'align'
+                      ? [{ label: '对齐', color: 'arcoblue' }]
+                      : [],
+              },
+        quantityText: live.quantity === 0 ? '—' : formatNumber(live.quantity, 6),
+        entryPriceText: live.entryPrice > 0 ? formatNumber(live.entryPrice, 4) : '—',
+        closePriceText: live.closePrice !== null ? formatNumber(live.closePrice, 4) : '—',
+        notionalText: live.notionalUsd === 0 ? '—' : formatUsd(live.notionalUsd),
+        result: { label: liveStatusLabel(live.status), color: liveStatusColor(live.status) },
+        note: fillNote(row) || undefined,
+      }]
+    }
+
+    const paper = row.paper
+    if (!paper) return []
+
+    const opens = paper.isFilled && fillOpens(paper)
+    const entry = paperEntryOf(paper.symbol)
+    const reduceMargin =
+      paper.isFilled
+      && paper.isReducing
+      && paper.initialMarginPercent !== null
+      && paper.initialMarginPercent > 0
+        ? Math.abs(paper.notional) * paper.initialMarginPercent / 100
+        : 0
+    const reduceReturn = reduceMargin > 0 ? (paper.realizedPnl / reduceMargin) * 100 : null
+
+    return [{
+      key: row.key,
+      atText: formatDateTime(paper.observedAt),
+      symbol: paper.symbol,
+      action: paper.isFilled && paper.side ? { side: paper.side } : null,
+      quantityText: paper.isFilled ? formatNumber(paper.size, 6) : '—',
+      entryPriceText: paper.isFilled
+        ? opens
+          ? formatNumber(paper.price, 4)
+          : entry !== null
+            ? formatNumber(entry, 4)
+            : '—'
+        : '—',
+      closePriceText: paper.isFilled && !opens ? formatNumber(paper.price, 4) : '—',
+      notionalText: paper.isFilled ? formatUsd(paper.notional) : '—',
+      result: {
+        label: paper.isFilled ? '已成交' : '未跟上',
+        color: paper.isFilled ? 'green' : 'orange',
+      },
+      realizedText: paper.realizedPnl !== 0 ? `$${formatNumber(paper.realizedPnl, 4)}` : '—',
+      realizedTone:
+        paper.realizedPnl === 0 ? 'neutral' : paper.realizedPnl > 0 ? 'profit' : 'loss',
+      fillReturnText: reduceReturn === null ? undefined : formatPercent(reduceReturn, 2),
+      fillReturnTone:
+        reduceReturn === null ? undefined : reduceReturn >= 0 ? 'profit' : 'loss',
+      note: fillNote(row) || undefined,
+    }]
+  })
+})
+
+const equityEmptyText = computed(() => {
+  const f = follower.value
+  if (f === null || f.curve.length === 0) {
+    return '还没有权益点。账户刚建立时，等第一次对账完成后就会出现。'
+  }
+
+  return `目前只有 ${f.curve.length} 个权益点，画不出趋势。有成交或每 5 分钟会补一个点。`
+})
+
+/// 请求序号：从 A 跳到 B 时旧请求可能后回来，落地前必须确认它仍属于当前路由。
+let loadGeneration = 0
+
+/// silent = 后台补刷新（实时事件触发）：不点亮加载态、失败时保留旧数据，
+/// 因为一次推送没取到不该把已经能看的页面清空或闪一下。
+async function load(silent = false): Promise<void> {
+  const generation = ++loadGeneration
+
+  if (!silent) {
+    loading.value = true
+    errorMessage.value = ''
+    notFound.value = false
+  }
 
   try {
-    follower.value = await api.follower(followerId.value)
+    const detail = await api.follower(followerId.value)
 
-    if (follower.value === null) {
+    if (generation !== loadGeneration) return
+
+    // 后台重取不能把正在输入的本金冲掉；只有用户没动过它（或服务端本金确实变了）才回填
+    const previousCapital = follower.value?.initialCapital
+
+    follower.value = detail
+
+    if (detail === null) {
       notFound.value = true
       costReport.value = null
       return
     }
 
-    capitalInput.value = follower.value.initialCapital
+    if (!silent || capitalInput.value === previousCapital) {
+      capitalInput.value = detail.initialCapital
+    }
+
+    // 行情按市场分组推送：只登记仍在仓的市场（空仓行不需要价格）
+    subscribeFollowerMarkets(
+      detail.positions.filter((p) => p.size !== 0).map((p) => p.marketId),
+    )
 
     // 执行成本测量是**池子级**的（逐腿对照池子成交），所以按订阅的带单员取
-    costReport.value = await api.ledger(follower.value.leadAccountIndex)
+    const report = await api.ledger(detail.leadAccountIndex)
+
+    if (generation !== loadGeneration) return
+
+    costReport.value = report
 
     // 实盘流水单独取：纸面流水那张表是"跟着它会变成多少"，与真实发出的单是两回事。
     // 取不到也不该让整页失败——页面上的配置与纸面部分依然有意义
-    if (follower.value.mode === 'live') {
+    if (detail.mode === 'live') {
       try {
-        liveOrders.value = await api.liveOrders(followerId.value)
+        const orders = await api.liveOrders(followerId.value)
+
+        if (generation !== loadGeneration) return
+
+        liveOrders.value = orders
       } catch {
         liveOrders.value = []
       }
 
       try {
-        liveAccount.value = await api.liveAccount(followerId.value)
+        const account = await api.liveAccount(followerId.value)
+
+        if (generation !== loadGeneration) return
+
+        liveAccount.value = account
         liveAccountError.value = ''
       } catch (error) {
         liveAccount.value = null
@@ -483,9 +918,15 @@ async function load(): Promise<void> {
       stopLiveRefresh()
     }
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    if (generation !== loadGeneration) return
+
+    if (!silent) {
+      errorMessage.value = error instanceof Error ? error.message : String(error)
+    }
   } finally {
-    loading.value = false
+    if (!silent && generation === loadGeneration) {
+      loading.value = false
+    }
   }
 }
 
@@ -606,8 +1047,11 @@ onMounted(async () => {
   await load()
 })
 
-// 从卡片 A 跳到卡片 B 时组件不会重建，得跟着路由参数重新取数
-watch(followerId, load)
+// 从卡片 A 跳到卡片 B 时组件不会重建，得跟着路由参数重新取数。
+// 不要直接把 load 交给 watch：watch 会传 (newId, oldId)，那会落进 silent 参数里
+watch(followerId, () => {
+  void load()
+})
 </script>
 
 <template>
@@ -623,6 +1067,10 @@ watch(followerId, load)
             <a-tag size="small" :color="follower.mode === 'live' ? 'orange' : 'arcoblue'">
               {{ copyModeLabel(follower.mode) }}
             </a-tag>
+            <!-- 纸面的实时通道也要看得见：断了的通道与"账户一直没变化"在界面上长得一样 -->
+            <a-tooltip v-if="follower.mode !== 'live'" :content="followerLiveHint">
+              <a-tag size="small" :color="followerLiveColor">{{ followerLiveLabel }}</a-tag>
+            </a-tooltip>
             <!-- 实时与否必须看得见：断了的通道与"账户一直没变化"在界面上长得一样 -->
             <template v-if="follower.mode === 'live'">
               <a-tooltip :content="liveChannelHint">
@@ -692,7 +1140,7 @@ watch(followerId, load)
             继续
           </a-button>
 
-          <a-button :loading="loading" @click="load">刷新</a-button>
+          <a-button :loading="loading" @click="load()">刷新</a-button>
 
           <a-link
             status="danger"
@@ -771,106 +1219,7 @@ watch(followerId, load)
           :title="`读不到交易所账户：${liveAccountError}`"
         />
 
-        <a-grid :cols="6" :col-gap="12" :row-gap="14">
-          <a-grid-item v-if="follower.mode === 'live'">
-            <MetricTile
-              label="钱包余额"
-              :value="formatUsd(liveAccount?.walletBalance ?? 0, 4)"
-              :note="`规模基准 ${formatUsd(follower.initialCapital)}`"
-            />
-          </a-grid-item>
-          <a-grid-item v-else>
-            <MetricTile
-              label="账户权益"
-              :value="formatUsd(follower.equity, 4)"
-              :note="`本金 ${formatUsd(follower.initialCapital)}`"
-              :tone="follower.equity >= follower.initialCapital ? 'success' : 'danger'"
-            />
-          </a-grid-item>
-
-          <a-grid-item v-if="follower.mode === 'live'">
-            <MetricTile
-              label="可用保证金"
-              :value="formatUsd(liveAccount?.availableBalance ?? 0, 4)"
-              note="此刻能开仓的钱"
-            />
-          </a-grid-item>
-          <a-grid-item v-else>
-            <MetricTile
-              label="收益率"
-              :value="formatPercent(follower.returnPercent, 4)"
-              :note="`${formatUsd(follower.equity - follower.initialCapital, 4)}`"
-              :tone="follower.returnPercent >= 0 ? 'success' : 'danger'"
-            />
-          </a-grid-item>
-
-          <a-grid-item>
-            <MetricTile
-              label="未实现盈亏"
-              :value="
-                follower.mode === 'live' && accountReturn !== null
-                  ? `${formatUsd(accountPnl, 4)}（${formatPercent(accountReturn, 2)}）`
-                  : formatUsd(accountPnl, 4)
-              "
-              :note="
-                follower.mode === 'live'
-                  ? '按每秒标记价实时计算'
-                  : hasUnpricedPosition
-                    ? '含取不到价的标的（不可得）'
-                    : '按盘口中间价盯市'
-              "
-              :tone="
-                follower.mode === 'live'
-                  ? accountPnl >= 0
-                    ? 'success'
-                    : 'danger'
-                  : hasUnpricedPosition
-                    ? 'warning'
-                    : 'default'
-              "
-            />
-          </a-grid-item>
-
-          <a-grid-item>
-            <MetricTile label="持仓名义价值" :value="formatUsd(accountNotional)" note="总敞口" />
-          </a-grid-item>
-
-          <a-grid-item v-if="follower.mode === 'live'">
-            <MetricTile
-              label="下单 / 未跟上"
-              :value="`${liveOrderCounts.placed} / ${liveOrderCounts.notFollowed}`"
-              :note="
-                liveOrderCounts.notFollowed > 0
-                  ? '未跟上 = 没发或被拒（见流水）'
-                  : '全部跟上'
-              "
-              :tone="liveOrderCounts.notFollowed > 0 ? 'warning' : 'success'"
-            />
-          </a-grid-item>
-          <a-grid-item v-else>
-            <MetricTile
-              label="已实现盈亏"
-              :value="formatUsd(follower.realizedPnl, 4)"
-              note="平仓部分结转"
-            />
-          </a-grid-item>
-
-          <a-grid-item v-if="follower.mode === 'live'">
-            <MetricTile
-              label="规模基准"
-              :value="formatUsd(follower.initialCapital)"
-              note="比例的分母"
-            />
-          </a-grid-item>
-          <a-grid-item v-else>
-            <MetricTile
-              label="成交 / 跳过"
-              :value="`${follower.fillCount} / ${follower.skipCount}`"
-              :note="follower.skipCount > 0 ? '跳过 = 带单员动了但我没跟上' : '全部跟上'"
-              :tone="follower.skipCount > 0 ? 'warning' : 'success'"
-            />
-          </a-grid-item>
-        </a-grid>
+        <FollowerOverview :metrics="metrics" />
 
         <a-alert
           v-if="follower.fees > 0 && follower.mode !== 'live'"
@@ -905,127 +1254,32 @@ watch(followerId, load)
           </a-tooltip>
         </template>
 
-        <a-table
-          :data="unifiedPositions"
-          row-key="key"
-          size="small"
-          :bordered="false"
-          :pagination="false"
+        <FollowerPositionsTable
+          :rows="positionRows"
+          :empty-text="
+            follower.mode === 'live' ? '交易所账号当前没有持仓' : '当前没有持仓'
+          "
+          :show-realized="follower.mode !== 'live'"
+          :show-live-columns="follower.mode === 'live'"
         >
-          <template #columns>
-            <a-table-column title="标的" :width="130">
-              <template #cell="{ record }">
-                <a-tooltip
-                  v-if="record.live && !record.live.pair"
-                  :content="`${record.live.venueSymbol} 不在合约目录里，认不出它是哪个标的`"
-                >
-                  <span class="mono">{{ record.symbol }}</span>
-                </a-tooltip>
-                <span v-else class="mono">{{ record.symbol }}</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="方向" :width="70" align="center">
-              <template #cell="{ record }">
-                <a-tag v-if="record.side" size="small" :color="record.side === 'long' ? 'green' : 'red'">
-                  {{ record.side === 'long' ? '多' : '空' }}
-                </a-tag>
-                <span v-else style="color: var(--color-text-3)">空仓</span>
-              </template>
-            </a-table-column>
-            <!-- 数量列写 width，不写 minWidth：两种写法在这张表上不是一个效果——
-                 表格比各列之和宽出五百多 px，没有固定宽度的列会把这部分**全部**吞掉
-                 （实测 minWidth 让数量列涨到 292px，而写死宽度时浏览器按比例均摊，
-                 列与列的比例被保住）。数据变长不会把数字挤折行：列宽不够时表格整体横向滚动 -->
-            <a-table-column title="数量" :width="110" align="right">
-              <template #cell="{ record }">{{ formatNumber(record.size, 6) }}</template>
-            </a-table-column>
-            <a-table-column title="开仓均价" :width="140" align="right">
-              <template #cell="{ record }">{{ formatNumber(record.entry, 6) }}</template>
-            </a-table-column>
-            <a-table-column title="标记价" :width="140" align="right">
-              <template #cell="{ record }">
-                <span v-if="record.mark !== null">{{ formatNumber(record.mark, 6) }}</span>
-                <a-tooltip v-else content="取不到标记价，该标的的未实现盈亏不可得">
-                  <span style="color: rgb(var(--warning-6))">取价失败</span>
-                </a-tooltip>
-              </template>
-            </a-table-column>
-            <a-table-column title="名义价值" :width="110" align="right">
-              <template #cell="{ record }">${{ formatNumber(record.notional, 2) }}</template>
-            </a-table-column>
-            <a-table-column title="未实现盈亏" :width="160" align="right">
-              <template #cell="{ record }">
-                <span
-                  v-if="record.mark === null && record.size !== 0"
-                  style="color: var(--color-text-3)"
-                >
-                  不可得
-                </span>
-                <span
-                  v-else
-                  :style="{
-                    color: record.unrealized >= 0 ? 'rgb(var(--success-6))' : 'rgb(var(--danger-6))',
-                  }"
-                >
-                  ${{ formatNumber(record.unrealized, 4) }}
-                  <template v-if="record.liveReturn !== null">
-                    （{{ formatPercent(record.liveReturn, 2) }}）
-                  </template>
-                </span>
-              </template>
-            </a-table-column>
-
-            <!-- 纸面专属：只剩已实现盈亏（先前的目标数量/池子仓位/跟踪偏差三列已删：
-                 它们是同一件事的三种换算——数量列是本方仓位、池子的仓位在池详情页，
-                 偏差则要读者自己做一次减法才有意义） -->
-            <a-table-column v-if="follower.mode !== 'live'" title="已实现盈亏" :width="120" align="right">
-              <template #cell="{ record }">
-                <span v-if="record.paper">${{ formatNumber(record.paper.realizedPnl, 4) }}</span>
-              </template>
-            </a-table-column>
-
-            <!-- 实盘专属：账户事实与操作 -->
-            <a-table-column v-if="follower.mode === 'live'" title="杠杆" :width="70" align="right">
-              <template #cell="{ record }">{{ record.live ? `${record.live.leverage}×` : '—' }}</template>
-            </a-table-column>
-            <a-table-column v-if="follower.mode === 'live'" title="强平价" :width="120" align="right">
-              <template #cell="{ record }">
-                {{
-                  record.live && record.live.liquidationPrice !== 0
-                    ? formatNumber(record.live.liquidationPrice, 6)
-                    : '—'
-                }}
-              </template>
-            </a-table-column>
-            <a-table-column v-if="follower.mode === 'live'" title="操作" :width="90" align="center">
-              <template #cell="{ record }">
-                <!-- 认不出标的的仓位不给平：那说明这个合约不在目录里，
-                     我们连它是哪个标的都不知道，不该对着它下单 -->
-                <a-button
-                  v-if="record.live && record.live.pair"
-                  size="mini"
-                  status="danger"
-                  :disabled="!canEdit"
-                  :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
-                  @click="record.live && openClose(record.live)"
-                >
-                  平仓
-                </a-button>
-                <a-tooltip v-else content="这个合约不在合约目录里，认不出是哪个标的，不能对着它下单">
-                  <span style="color: var(--color-text-3); font-size: 12px">—</span>
-                </a-tooltip>
-              </template>
-            </a-table-column>
+          <template #live-action="{ row }">
+            <!-- 认不出标的的仓位不给平：那说明这个合约不在目录里，
+                 我们连它是哪个标的都不知道，不该对着它下单 -->
+            <a-button
+              v-if="row.live && row.live.pair"
+              size="mini"
+              status="danger"
+              :disabled="!canEdit"
+              :title="canEdit ? '' : '需要「跟单」的管理权限（编辑）'"
+              @click="openClose(row.live)"
+            >
+              平仓
+            </a-button>
+            <a-tooltip v-else content="这个合约不在合约目录里，认不出是哪个标的，不能对着它下单">
+              <span style="color: var(--color-text-3); font-size: 12px">—</span>
+            </a-tooltip>
           </template>
-
-          <template #empty>
-            <a-empty
-              :description="
-                follower.mode === 'live' ? '交易所账号当前没有持仓' : '我方与池子当前都是空仓'
-              "
-            />
-          </template>
-        </a-table>
+        </FollowerPositionsTable>
       </a-card>
 
       <!-- 流水：两种模式同一张表。共享列（时间/标的/动作/数量/开仓价/平仓价/名义价值/结果），
@@ -1047,219 +1301,13 @@ watch(followerId, load)
           </span>
         </template>
 
-        <a-table
-          :data="unifiedRows"
-          row-key="key"
-          size="small"
-          :bordered="false"
+        <FollowerFillsTable
+          :rows="fillRows"
+          price-mode="open-close"
+          :show-realized="follower.mode !== 'live'"
           :pagination="{ pageSize: 20, size: 'small' }"
-        >
-          <template #columns>
-            <a-table-column title="时间" :width="165">
-              <template #cell="{ record }">
-                {{ formatDateTime(record.live ? record.live.createdAt : record.paper.observedAt) }}
-              </template>
-            </a-table-column>
-
-            <a-table-column title="标的" :width="185">
-              <template #cell="{ record }">
-                <!-- 目标未知（解析不出合约）：只剩源名字，如实显示 -->
-                <span
-                  v-if="record.live && record.live.targetBase === '—'"
-                  class="mono"
-                  style="color: var(--color-text-3)"
-                >
-                  {{ record.live.sourceSymbol }}<span style="font-size: 11px">（目标未知）</span>
-                </span>
-                <span v-else-if="record.live" class="mono">
-                  <template
-                    v-if="record.live.sourceSymbol !== record.live.targetBase && record.live.sourceSymbol !== '—'"
-                  >
-                    {{ record.live.targetPair
-                    }}<span style="color: var(--color-text-3)">（源 {{ record.live.sourceSymbol }}）</span>
-                  </template>
-                  <template v-else>{{ record.live.targetPair }}</template>
-                </span>
-                <span v-else class="mono">{{ record.paper.symbol }}</span>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="动作" :width="150">
-              <template #cell="{ record }">
-                <!-- 纸面：买入/卖出；实盘：四种意图之一，手动/对齐要标出来。
-                     两列必须各说各的：跳过的行"没有动作"，写「未跟上」是把右边「结果」「说明」
-                     两列又说一遍——动作列只回答"做了什么" -->
-                <template v-if="record.paper">
-                  <a-tag
-                    v-if="record.paper.isFilled"
-                    size="small"
-                    :color="record.paper.side === 'buy' ? 'green' : 'red'"
-                  >
-                    {{ record.paper.side === 'buy' ? '买入' : '卖出' }}
-                  </a-tag>
-                  <span v-else style="color: var(--color-text-3)">—</span>
-                </template>
-                <template v-else-if="record.live">
-                  <span v-if="record.live.intent === 'none'" style="color: var(--color-text-3)">—</span>
-                  <span v-else>
-                    {{ liveIntentLabel(record.live.intent) }}
-                    <span style="color: var(--color-text-3)">{{ record.live.side }}</span>
-                    <a-tag v-if="record.live.trigger === 'manual'" size="small" color="orange">手动</a-tag>
-                    <a-tag v-else-if="record.live.trigger === 'align'" size="small" color="arcoblue">对齐</a-tag>
-                  </span>
-                </template>
-              </template>
-            </a-table-column>
-
-            <!-- 数量列与持仓表同宽同写法：写 width 不写 minWidth。这张表里没有固定宽度的
-                 列会吞掉全部剩余宽度（实盘删掉两列后实测被撑到 276px）；写死宽度时
-                 浏览器按比例均摊，只剩「说明」一列自适应、在右端吸收零头 -->
-            <a-table-column title="数量" :width="110" align="right">
-              <template #cell="{ record }">
-                {{
-                  record.live
-                    ? record.live.quantity === 0
-                      ? '—'
-                      : formatNumber(record.live.quantity, 6)
-                    : record.paper && record.paper.isFilled
-                      ? formatNumber(record.paper.size, 6)
-                      : '—'
-                }}
-              </template>
-            </a-table-column>
-
-            <!-- 开仓价/平仓价：按行的身份各就各位。
-                 纸面的平仓行用该标的当前的成本线近似（流水里没记当时的 vwap） -->
-            <a-table-column :width="110" align="right">
-              <template #title>
-                <HeaderHint
-                  label="开仓价"
-                  hint="这笔仓位是多少钱开的：开仓行=本单成交均价；平仓行=被平仓位的开仓均价。旧数据用下单时的参考价近似，误差不到一个基点"
-                />
-              </template>
-              <template #cell="{ record }">
-                <template v-if="record.live">
-                  {{ record.live.entryPrice > 0 ? formatNumber(record.live.entryPrice, 4) : '—' }}
-                </template>
-                <template v-else-if="record.paper && record.paper.isFilled">
-                  {{
-                    fillOpens(record.paper)
-                      ? formatNumber(record.paper.price, 4)
-                      : paperEntryOf(record.paper.symbol) !== null
-                        ? formatNumber(paperEntryOf(record.paper.symbol) ?? 0, 4)
-                        : '—'
-                  }}
-                </template>
-                <template v-else>—</template>
-              </template>
-            </a-table-column>
-
-            <a-table-column :width="110" align="right">
-              <template #title>
-                <HeaderHint
-                  label="平仓价"
-                  hint="这笔仓位是多少钱平的（本单的成交均价）。只有平仓行有——开仓行与未发出的行是空的"
-                />
-              </template>
-              <template #cell="{ record }">
-                <template v-if="record.live">
-                  {{ record.live.closePrice !== null ? formatNumber(record.live.closePrice, 4) : '—' }}
-                </template>
-                <template v-else-if="record.paper && record.paper.isFilled && !fillOpens(record.paper)">
-                  {{ formatNumber(record.paper.price, 4) }}
-                </template>
-                <template v-else>—</template>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="名义价值" :width="110" align="right">
-              <template #cell="{ record }">
-                <template v-if="record.live">
-                  {{ record.live.notionalUsd === 0 ? '—' : formatUsd(record.live.notionalUsd) }}
-                </template>
-                <template v-else-if="record.paper && record.paper.isFilled">
-                  {{ formatUsd(record.paper.notional) }}
-                </template>
-                <template v-else>—</template>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="结果" :width="90" align="center">
-              <template #cell="{ record }">
-                <template v-if="record.live">
-                  <a-tag size="small" :color="liveStatusColor(record.live.status)">
-                    {{ liveStatusLabel(record.live.status) }}
-                  </a-tag>
-                </template>
-                <template v-else-if="record.paper">
-                  <a-tag size="small" :color="record.paper.isFilled ? 'green' : 'orange'">
-                    {{ record.paper.isFilled ? '已成交' : '未跟上' }}
-                  </a-tag>
-                </template>
-              </template>
-            </a-table-column>
-
-            <!-- 实盘没有专属列：池仓名义价值/目标名义价值已删——读流水的人要的是"这一笔
-                 实际下了多少"（就在「名义价值」列），另外两个是算这笔时的中间量；
-                 真要追溯，它们仍记在库里的订单行上（LiveOrder.PoolNotional/TargetNotionalUsd） -->
-
-            <!-- 纸面专属：只剩实现盈亏。
-                 仓位的前后变化不单列：本单数量在「数量」、方向在「动作」，
-                 池子的仓位在池详情页——再画两列只是把同一件事说第二遍 -->
-            <a-table-column v-if="follower.mode !== 'live'" title="实现盈亏" :width="110" align="right">
-              <template #cell="{ record }">
-                <span
-                  v-if="record.paper && record.paper.realizedPnl !== 0"
-                  :style="{
-                    color:
-                      record.paper.realizedPnl >= 0 ? 'rgb(var(--success-6))' : 'rgb(var(--danger-6))',
-                  }"
-                >
-                  ${{ formatNumber(record.paper.realizedPnl, 4) }}
-                </span>
-                <span v-else style="color: var(--color-text-3)">—</span>
-              </template>
-            </a-table-column>
-            <a-table-column v-if="follower.mode !== 'live'" title="深度" :width="85" align="center">
-              <template #cell="{ record }">
-                <span
-                  v-if="record.paper && !record.paper.isFilled"
-                  style="color: var(--color-text-3)"
-                >
-                  —
-                </span>
-                <a-tag
-                  v-else-if="record.paper"
-                  size="small"
-                  :color="record.paper.depthSufficient ? 'green' : 'orange'"
-                >
-                  {{ record.paper.depthSufficient ? '够' : '缺' }}
-                </a-tag>
-              </template>
-            </a-table-column>
-
-            <!-- 说明排最右：它是对整行的一句注解，夹在数字列中间会把"这一行发生了什么"
-                 割成两半。
-                 宽度**不给列**：Arco 把表格的剩余宽度分给最后一列，给列写宽度挡不住它被撑开；
-                 真正封顶的是单元格里的 .reason-text（超出省略号、悬停看全文） -->
-            <a-table-column title="说明">
-              <template #cell="{ record }">
-                <a-tooltip v-if="fillNote(record)" :content="fillNote(record)">
-                  <span class="reason-text">{{ fillNote(record) }}</span>
-                </a-tooltip>
-                <span v-else style="color: var(--color-text-3)">—</span>
-              </template>
-            </a-table-column>
-          </template>
-
-          <template #empty>
-            <a-empty
-              :description="
-                follower.mode === 'live' ? '还没有实盘动作' : '还没有任何流水'
-              "
-            />
-          </template>
-        </a-table>
+          :empty-text="follower.mode === 'live' ? '还没有实盘动作' : '还没有任何流水'"
+        />
       </a-card>
 
 <!-- 权益曲线 -->
@@ -1273,21 +1321,11 @@ watch(followerId, load)
           </span>
         </template>
 
-        <!-- 判据是<b>点数</b>而不是序列条数：这里只有一条序列，
-             写成 equitySeries.length > 1 会恒为假，有数据也永远画不出曲线 -->
-        <LineChart
-          v-if="follower.curve.length > 1"
-          :series="equitySeries"
-          :baseline="follower.initialCapital"
+        <FollowerEquityChart
+          :points="follower.curve"
+          :initial-capital="follower.initialCapital"
           :height="260"
-        />
-        <a-empty
-          v-else
-          :description="
-            follower.curve.length === 0
-              ? '还没有权益点。账户刚建立时，等第一次对账完成后就会出现。'
-              : `目前只有 ${follower.curve.length} 个权益点，画不出趋势。有成交或每 5 分钟会补一个点。`
-          "
+          :empty-text="equityEmptyText"
         />
       </a-card>
 
@@ -1307,7 +1345,7 @@ watch(followerId, load)
                 <span class="mono">{{ closeTarget.pair }}</span>
               </a-descriptions-item>
               <a-descriptions-item label="方向">
-                {{ closeTarget.direction === 'short' ? '空' : '多' }}
+                <DirectionMark :side="closeTarget.direction === 'short' ? 'short' : 'long'" />
               </a-descriptions-item>
               <a-descriptions-item label="数量">
                 {{ formatNumber(closeTarget.size, 6) }}
@@ -1456,7 +1494,11 @@ watch(followerId, load)
           <a-table-column title="时间" :width="165">
             <template #cell="{ record }">{{ formatDateTime(record.observedAt) }}</template>
           </a-table-column>
-          <a-table-column title="标的" data-index="symbol" :width="105" />
+          <a-table-column title="标的" :width="140">
+            <template #cell="{ record }">
+              <SymbolName :symbol="record.symbol" />
+            </template>
+          </a-table-column>
           <a-table-column title="方向" :width="70" align="center">
             <template #cell="{ record }">
               <a-tag size="small" :color="record.side === 'buy' ? 'green' : 'red'">
@@ -1515,19 +1557,6 @@ watch(followerId, load)
 /* 原因压成一行：超出就用省略号，全文在悬停提示里。
    为什么不用整段换行：原因里带着价与步长，完整摊开会把这一列撑成三行，
    整张表被它带着一起变高，而它并不是每行都要读的字段 */
-.reason-text {
-  display: block;
-  overflow: hidden;
-
-  /* 宽度在这里封顶，而不是靠列的 :width —— Arco 的表会把剩余宽度分给最后一列，
-     给列设 220 实测被撑到 732，结果一个字都没截断 */
-  max-width: 220px;
-  font-size: 12px;
-  color: var(--color-text-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: help;
-}
 
 .mono {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);

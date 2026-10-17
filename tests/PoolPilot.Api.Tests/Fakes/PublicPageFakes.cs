@@ -35,6 +35,15 @@ internal sealed class PublicPageUpstream : ILighterPoolsClient
 
     public int SnapshotReads { get; private set; }
 
+    /// <summary>快照里的持仓。默认空；要断言字段映射的用例自己填。</summary>
+    internal IReadOnlyList<PoolPosition> Positions { get; set; } = [];
+
+    /// <summary>未成交挂单。默认空；公开详情只该带走展示市场的挂单。</summary>
+    internal IReadOnlyList<PoolOrder> Orders { get; set; } = [];
+
+    /// <summary>近端成交。默认空；已实现盈亏由它重建。</summary>
+    internal IReadOnlyList<PoolTrade> Trades { get; set; } = [];
+
     public Task<IReadOnlyList<Pool>> FetchPoolsAsync(
         PoolFilter filter,
         CancellationToken cancellationToken = default)
@@ -63,8 +72,8 @@ internal sealed class PublicPageUpstream : ILighterPoolsClient
             AvailableBalance = UsdAmount.From(PoolEquity / 2m),
             InitialMarginRequirement = UsdAmount.From(PoolEquity / 4m),
             MaintenanceMarginRequirement = UsdAmount.From(PoolEquity / 8m),
-            Positions = [],
-            Orders = [],
+            Positions = Positions,
+            Orders = Orders,
         });
     }
 
@@ -101,12 +110,12 @@ internal sealed class PublicPageUpstream : ILighterPoolsClient
         AccountIndex account,
         int limit = 50,
         CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("公开页不读池成交");
+        Task.FromResult(Trades);
 
     public Task<IReadOnlyList<PoolOrder>> FetchOrdersAsync(
         AccountIndex account,
         CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("公开页不读挂单");
+        Task.FromResult(Orders);
 
     public Task<OrderBookSnapshot> FetchOrderBookAsync(
         int marketId,

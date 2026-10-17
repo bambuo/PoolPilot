@@ -43,6 +43,7 @@ public sealed class LeadTraderRegistry(
     LiveTradingLimits limits,
     IFollowerLedgerActivity ledgerActivity,
     ILeadActivity leadActivity,
+    IFollowerLiveBroadcaster followerLive,
     ILogger<LeadTraderRegistry> logger,
     ILoggerFactory loggerFactory) : ILeadWatchState, ILeadTraderSync, IDisposable
 {
@@ -306,6 +307,7 @@ public sealed class LeadTraderRegistry(
             options,
             loggerFactory.CreateLogger<PaperFollower>(),
             ledgerActivity,
+            followerLive,
             follower);
 
     /// <summary>
@@ -503,6 +505,7 @@ public sealed class LeadTraderRegistry(
 
             // 池子的权益/仓位快照变了，公开页的卡片与详情要跟着刷新
             leadActivity.NotifyLeadChanged(pool.Value);
+            await followerLive.BroadcastFollowerChangedAsync(0, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -536,6 +539,7 @@ public sealed class LeadTraderRegistry(
         // 跟单员落账后还会走 IFollowerLedgerActivity；这里覆盖"池动了但没有新流水"
         // （例如规模比例/池子权益变化）的情况。
         leadActivity.NotifyLeadChanged(pool.Value);
+        await followerLive.BroadcastFollowerChangedAsync(0, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

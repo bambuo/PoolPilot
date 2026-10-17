@@ -3,6 +3,7 @@ using System.Threading.Channels;
 
 using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.Dtos;
+using PoolPilot.Domain.Services;
 using PoolPilot.Domain.ValueObjects;
 
 namespace PoolPilot.Api.Streaming;
@@ -664,12 +665,22 @@ public sealed class PublicPageFeed(
 
             if (position.MarketId == marketId)
             {
+                decimal notional = Math.Abs(position.Size) * markPrice;
+                decimal unrealizedPnl = position.Size * (markPrice - position.EntryVwap);
+                decimal? margin = position.InitialMarginPercent is > 0m && notional > 0m
+                    ? notional * position.InitialMarginPercent.Value / 100m
+                    : null;
+
                 position = position with
                 {
                     MarkPrice = markPrice,
                     HasMark = true,
-                    Notional = Math.Abs(position.Size) * markPrice,
-                    UnrealizedPnl = position.Size * (markPrice - position.EntryVwap),
+                    Notional = notional,
+                    UnrealizedPnl = unrealizedPnl,
+                    MarginAmount = margin,
+                    UnrealizedPnlPercent = margin is > 0m
+                        ? unrealizedPnl / margin.Value * 100m
+                        : null,
                 };
             }
 
@@ -683,6 +694,8 @@ public sealed class PublicPageFeed(
             ? 0m
             : (equity - detail.InitialCapital) / detail.InitialCapital * 100m;
 
+        ApplyLiquidationPrices(positions, equity);
+
         return detail with
         {
             Positions = positions,
@@ -692,6 +705,60 @@ public sealed class PublicPageFeed(
             ReturnPercent = returnPercent,
             MarksUnavailable = [.. detail.MarksUnavailable.Where(id => id != marketId)],
         };
+    }
+
+    /// <summary>
+    /// 行情补丁也要重算清算价：它随现价与权益一起动。任一在仓市场缺价或缺维持保证金率时
+    /// 整批不更新——少算一笔占用会把清算价推远。
+    /// </summary>
+    private static void ApplyLiquidationPrices(List<PublicPositionDto> positions, decimal equity)
+    {
+        if (positions.Any(p => p.Size != 0m && (!p.HasMark || p.MaintenanceMarginPercent <= 0m)))
+        {
+            return;
+        }
+
+        List<PaperMarginPosition> marginPositions =
+        [
+            .. positions
+                .Where(p => p.Size != 0m)
+                .Select(p => new PaperMarginPosition
+                {
+                    MarketId = p.MarketId,
+                    SignedSize = p.Size,
+                    EntryPrice = p.EntryVwap,
+                    MarkPrice = p.MarkPrice,
+                    Notional = p.Notional,
+                    UnrealizedPnl = p.UnrealizedPnl,
+                    MaintenanceMarginPercent = p.MaintenanceMarginPercent,
+                }),
+        ];
+
+        if (marginPositions.Count == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < positions.Count; i++)
+        {
+            PublicPositionDto position = positions[i];
+
+            if (position.Size == 0m)
+            {
+                continue;
+            }
+
+            PaperMarginPosition target = marginPositions.First(p => p.MarketId == position.MarketId);
+            decimal? liquidation = PaperMarginAnalyzer.LiquidationPrice(target, marginPositions, equity);
+
+            positions[i] = position with
+            {
+                LiquidationPrice = liquidation,
+                LiquidationDistancePercent = liquidation is null || position.MarkPrice <= 0m
+                    ? null
+                    : (liquidation.Value - position.MarkPrice) / position.MarkPrice * 100m,
+            };
+        }
     }
 
     /// <summary>

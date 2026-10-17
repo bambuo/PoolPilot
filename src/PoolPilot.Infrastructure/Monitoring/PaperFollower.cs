@@ -28,6 +28,7 @@ public sealed class PaperFollower(
     IOptions<LeadTraderOptions> options,
     ILogger<PaperFollower> logger,
     IFollowerLedgerActivity activity,
+    IFollowerLiveBroadcaster live,
     Follower config) : IFollower
 {
     /// <summary>读取流水时的上限，需足够大以完整重放仓位账。</summary>
@@ -189,6 +190,13 @@ public sealed class PaperFollower(
                 continue;
             }
 
+            bool reduces =
+                decision.Kind == PaperActionKind.Fill
+                && !oursSize.IsFlat
+                && (decision.PositionAfter.IsFlat
+                    || (decision.PositionAfter.HasSameDirectionAs(oursSize)
+                        && decision.PositionAfter.Absolute < oursSize.Absolute));
+
             newFills.Add(new PaperFill
             {
                 FollowerId = Id,
@@ -206,6 +214,12 @@ public sealed class PaperFollower(
                 DepthSufficient = decision.DepthSufficient,
                 Fee = decision.Fee,
                 RealizedPnl = decision.RealizedPnl,
+
+                // 减仓行记录**原仓位**的建仓保证金率，开仓/加仓记录源池当时值。
+                // 这样流水行的 ROI 才有正确的分母；反手属于开新仓，走源池值。
+                InitialMarginPercent = reduces
+                    ? ours?.InitialMarginPercent ?? poolPosition?.Margin?.Percent
+                    : poolPosition?.Margin?.Percent,
                 SkipReason = decision.SkipReason,
 
                 // 记"我方动作发生的时刻"，不是池子快照的时刻。这条流水记的是**我方的动作**；
@@ -268,6 +282,7 @@ public sealed class PaperFollower(
         // 行情变化走 market_stats 的逐帧补丁；"新流水/新权益点出现了"不走那条路，
         // 因为流水与权益曲线只能从库里重放出来。
         activity.NotifyFollowerChanged(Id);
+        await live.BroadcastFollowerChangedAsync(Id, cancellationToken).ConfigureAwait(false);
 
         _state = state with { LastEquityPointAt = now };
     }

@@ -222,3 +222,8 @@ MVC action，逐个要求"挂了 `RequirePermission` / `RequireAnyPermission`（
 不通过就 `Context.Abort()`（并打一条日志说明被谁拒的）。**拒绝连接是唯一能真正挡住内容的做法**——
 逐条过滤在这里不成立，因为推送本身就不认识收件人。分支由
 `MonitorHubAuthorizationTests` 覆盖（通过者照常补发状态、被拒者收不到任何推送）。
+
+`/hubs/followers`（工作台跟单模块）同理，门是 `menu:copy-list` 的 `view`：
+账本变化帧仍发全体，行情帧按市场分组，但准入漏掉的后果不是"多收几个价格"，
+而是任何登录用户都能收到账本变化信号并知道有哪些跟单员在动。`FollowerHubTests`
+覆盖准入、市场入组与"入组时必须同时确保上游 `market_stats` 订阅"。

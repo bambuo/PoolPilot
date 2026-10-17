@@ -136,6 +136,12 @@ public static class PublicPageMapper
         Notional = position.Notional,
         UnrealizedPnl = position.UnrealizedPnl,
         RealizedPnl = position.RealizedPnl,
+        InitialMarginPercent = position.InitialMarginPercent,
+        MarginAmount = position.MarginAmount,
+        MaintenanceMarginPercent = position.MaintenanceMarginPercent,
+        UnrealizedPnlPercent = position.UnrealizedPnlPercent,
+        LiquidationPrice = position.LiquidationPrice,
+        LiquidationDistancePercent = position.LiquidationDistancePercent,
         TrackingDeviationPercent = position.TrackingDeviationPercent,
     };
 
@@ -150,6 +156,8 @@ public static class PublicPageMapper
         Notional = fill.Notional,
         Fee = fill.Fee,
         RealizedPnl = fill.RealizedPnl,
+        InitialMarginPercent = fill.InitialMarginPercent,
+        IsReducing = fill.IsReducing,
         IsFilled = fill.IsFilled,
         SkipReason = fill.SkipReason,
         ObservedAt = fill.ObservedAt,

@@ -688,6 +688,9 @@ public sealed class FollowerFillRecord
 
     public decimal RealizedPnl { get; set; }
 
+    /// <summary>成交时源池的初始保证金率（百分数）；旧流水为 null。</summary>
+    public decimal? InitialMarginPercent { get; set; }
+
     public string? SkipReason { get; set; }
 
     public long ObservedAtUtcTicks { get; set; }
@@ -720,6 +723,7 @@ public sealed class FollowerFillRecord
             DepthSufficient = source.DepthSufficient,
             Fee = source.Fee.Value,
             RealizedPnl = source.RealizedPnl.Value,
+            InitialMarginPercent = source.InitialMarginPercent,
             SkipReason = source.SkipReason?.ToString(),
             ObservedAtUtc = source.ObservedAt.Utc,
         };
@@ -743,6 +747,7 @@ public sealed class FollowerFillRecord
         DepthSufficient = DepthSufficient,
         Fee = UsdAmount.From(Fee),
         RealizedPnl = UsdAmount.From(RealizedPnl),
+        InitialMarginPercent = InitialMarginPercent,
         SkipReason = Enum.TryParse(SkipReason, out PaperSkipReason reason) ? reason : null,
         ObservedAt = LighterTimestamp.FromMilliseconds(ObservedAtUtc.ToUnixTimeMilliseconds()),
     };

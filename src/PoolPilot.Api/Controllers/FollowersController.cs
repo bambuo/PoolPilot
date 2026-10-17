@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 
 using PoolPilot.Api.Authorization;
+using PoolPilot.Application.Abstractions;
 using PoolPilot.Application.Dtos;
 using PoolPilot.Application.UseCases;
 using PoolPilot.Domain.Constants;
@@ -34,7 +35,8 @@ public sealed class FollowersController(
     DeleteFollowerUseCase delete,
     GetLiveOrdersUseCase liveOrders,
     GetLiveAccountUseCase liveAccount,
-    CloseLivePositionUseCase closePosition) : ControllerBase
+    CloseLivePositionUseCase closePosition,
+    IFollowerLiveBroadcaster followerLive) : ControllerBase
 {
     /// <summary>全部跟单员的卡片摘要（不带流水与曲线）。</summary>
     [HttpGet]
@@ -116,6 +118,7 @@ public sealed class FollowersController(
         ArgumentNullException.ThrowIfNull(request);
 
         FollowerDto follower = await create.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
+        await followerLive.BroadcastFollowerChangedAsync(follower.Id, cancellationToken).ConfigureAwait(false);
 
         return CreatedAtAction(nameof(Get), new { id = follower.Id }, follower);
     }
@@ -130,7 +133,10 @@ public sealed class FollowersController(
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        return Ok(await update.ExecuteAsync(id, request, cancellationToken).ConfigureAwait(false));
+        FollowerDto follower = await update.ExecuteAsync(id, request, cancellationToken).ConfigureAwait(false);
+        await followerLive.BroadcastFollowerChangedAsync(id, cancellationToken).ConfigureAwait(false);
+
+        return Ok(follower);
     }
 
     /// <summary>删除跟单员及其流水。**不影响带单员是否继续观察**——那正是这次拆分的目的。</summary>
@@ -139,6 +145,7 @@ public sealed class FollowersController(
     public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken = default)
     {
         await delete.ExecuteAsync(id, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await followerLive.BroadcastFollowerChangedAsync(id, cancellationToken).ConfigureAwait(false);
 
         return NoContent();
     }

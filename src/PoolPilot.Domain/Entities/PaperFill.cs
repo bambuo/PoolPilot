@@ -73,6 +73,14 @@ public sealed record PaperFill
     /// <summary>本次平仓部分结转的已实现盈亏。开仓或加仓时为 0。</summary>
     public required UsdAmount RealizedPnl { get; init; }
 
+    /// <summary>
+    /// 成交时源池在该市场的初始保证金率（百分数，25 表示 25%）。
+    ///
+    /// 纸面账户沿用源池的杠杆口径；加仓时按成交名义额加权。旧流水没有这一列时为
+    /// <c>null</c>，读取时退回源池当前保证金率。
+    /// </summary>
+    public decimal? InitialMarginPercent { get; init; }
+
     /// <summary>被跳过的原因；成交时为 <c>null</c>。</summary>
     public required PaperSkipReason? SkipReason { get; init; }
 

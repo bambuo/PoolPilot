@@ -88,6 +88,12 @@ public sealed class GetFollowerUseCase(
             positions.Add(BuildPosition(marketId, poolPosition, ourPosition, instrumentById, scale, resolvedMarks));
         }
 
+        ApplyLiquidationPrices(positions, instrumentById, valuation.Equity.Value);
+
+        Dictionary<int, decimal> poolMarginByMarket = poolByMarket
+            .Where(entry => entry.Value.Margin is not null)
+            .ToDictionary(entry => entry.Key, entry => entry.Value.Margin!.Percent);
+
         return new FollowerDto
         {
             Id = config.Id,
@@ -114,7 +120,12 @@ public sealed class GetFollowerUseCase(
             SkipCount = fills.Count(f => !f.IsFilled),
             MarksUnavailable = resolvedMarks.Unavailable,
             Positions = positions,
-            Fills = [.. fills.OrderByDescending(f => f.ObservedAt.Utc).Select(ToFillDto)],
+            Fills =
+            [
+                .. fills
+                    .OrderByDescending(f => f.ObservedAt.Utc)
+                    .Select(fill => ToFillDto(fill, poolMarginByMarket)),
+            ],
             Curve = [.. curve.Select(ToCurveDto)],
         };
     }
@@ -139,6 +150,14 @@ public sealed class GetFollowerUseCase(
         bool hasMark = resolvedMarks.Prices.TryGetValue(marketId, out PriceAmount? mark);
         PriceAmount effectiveMark = hasMark && mark is not null ? mark : ourPosition?.EntryVwap ?? PriceAmount.Zero;
         decimal deviation = ourSize - target.Value;
+        decimal notional = ourPosition?.NotionalAt(effectiveMark).Value ?? 0m;
+        decimal unrealized = ourPosition?.UnrealizedPnlAt(effectiveMark).Value ?? 0m;
+
+        // 新流水记录建仓时源池的保证金率；旧流水没有记录时退回源池当前值。
+        decimal? marginPercent = ourPosition?.InitialMarginPercent ?? poolPosition?.Margin?.Percent;
+        decimal? marginAmount = marginPercent is > 0m && notional > 0m
+            ? notional * marginPercent.Value / 100m
+            : null;
 
         return new PaperPositionDto
         {
@@ -154,9 +173,17 @@ public sealed class GetFollowerUseCase(
             EntryVwap = ourPosition?.EntryVwap.Value ?? 0m,
             MarkPrice = effectiveMark.Value,
             HasMark = hasMark,
-            Notional = ourPosition?.NotionalAt(effectiveMark).Value ?? 0m,
-            UnrealizedPnl = ourPosition?.UnrealizedPnlAt(effectiveMark).Value ?? 0m,
+            Notional = notional,
+            UnrealizedPnl = unrealized,
             RealizedPnl = ourPosition?.RealizedPnl.Value ?? 0m,
+            InitialMarginPercent = marginPercent,
+            MarginAmount = marginAmount,
+            MaintenanceMarginPercent = instrument is null ? 0m : instrument.MaintenanceMarginPercent,
+            UnrealizedPnlPercent = hasMark && marginAmount is > 0m
+                ? unrealized / marginAmount.Value * 100m
+                : null,
+            LiquidationPrice = null,
+            LiquidationDistancePercent = null,
             PoolSize = poolSize,
             TargetSize = target.Value,
             TrackingDeviation = deviation,
@@ -166,7 +193,62 @@ public sealed class GetFollowerUseCase(
         };
     }
 
-    private static PaperFillDto ToFillDto(PaperFill fill) => new()
+    /// <summary>
+    /// 用账户级全仓口径补清算价：只让这一笔价格变动，其他仓位的维持保证金占用不变。
+    /// 任一在仓市场缺少维持保证金率时整批不计算——少算占用会把清算价推远，是危险的方向。
+    /// </summary>
+    private static void ApplyLiquidationPrices(
+        List<PaperPositionDto> positions,
+        Dictionary<int, InstrumentSpec> instruments,
+        decimal equity)
+    {
+        List<PaperPositionDto> open = [.. positions.Where(p => p.Size != 0m && p.HasMark)];
+
+        if (open.Any(p => !instruments.TryGetValue(p.MarketId, out InstrumentSpec? spec)
+            || spec.MaintenanceMarginPercent <= 0m))
+        {
+            return;
+        }
+
+        List<PaperMarginPosition> marginPositions =
+        [
+            .. open.Select(p => new PaperMarginPosition
+            {
+                MarketId = p.MarketId,
+                SignedSize = p.Size,
+                EntryPrice = p.EntryVwap,
+                MarkPrice = p.MarkPrice,
+                Notional = p.Notional,
+                UnrealizedPnl = p.UnrealizedPnl,
+                MaintenanceMarginPercent = instruments[p.MarketId].MaintenanceMarginPercent,
+            }),
+        ];
+
+        for (int i = 0; i < positions.Count; i++)
+        {
+            PaperPositionDto position = positions[i];
+
+            if (position.Size == 0m || !position.HasMark)
+            {
+                continue;
+            }
+
+            PaperMarginPosition target = marginPositions.First(p => p.MarketId == position.MarketId);
+            decimal? liquidation = PaperMarginAnalyzer.LiquidationPrice(target, marginPositions, equity);
+
+            positions[i] = position with
+            {
+                LiquidationPrice = liquidation,
+                LiquidationDistancePercent = liquidation is null || position.MarkPrice <= 0m
+                    ? null
+                    : (liquidation.Value - position.MarkPrice) / position.MarkPrice * 100m,
+            };
+        }
+    }
+
+    private static PaperFillDto ToFillDto(
+        PaperFill fill,
+        Dictionary<int, decimal> poolMarginByMarket) => new()
     {
         Id = fill.Id,
         MarketId = fill.MarketId,
@@ -182,6 +264,9 @@ public sealed class GetFollowerUseCase(
         Notional = fill.Notional.Value,
         Fee = fill.Fee.Value,
         RealizedPnl = fill.RealizedPnl.Value,
+        InitialMarginPercent = fill.InitialMarginPercent
+            ?? (poolMarginByMarket.TryGetValue(fill.MarketId, out decimal poolMargin) ? poolMargin : null),
+        IsReducing = fill.IsReducing,
         IsFilled = fill.IsFilled,
         SkipReason = fill.SkipReason switch
         {

@@ -67,7 +67,7 @@ public sealed class PublicPagesApiTests
         "accountIndex", "name", "origin", "isFrozen", "isWatching", "followerCount", "signalCount",
         "lastSignalAt", "observedSince", "poolCreatedAt", "totalAssetValue", "totalShares", "sharePrice",
         "navAt", "operatorFeePercent", "operatorSharePercent", "minOperatorSharePercent", "isDepositLimited",
-        "metrics", "exposure", "positions", "navCurve",
+        "metrics", "exposure", "positions", "orders", "navCurve",
     ];
 
     // ── G1–G4：匿名可读 ───────────────────────────────────
@@ -807,6 +807,7 @@ public sealed class PublicPagesApiTests
         Assert.AreEqual(1.1m, body.GetProperty("sharePrice").GetDecimal());
         Assert.AreEqual(3, body.GetProperty("navCurve").GetArrayLength());
         Assert.AreEqual(0, body.GetProperty("positions").GetArrayLength());
+        Assert.AreEqual(0, body.GetProperty("orders").GetArrayLength());
         Assert.AreEqual(0, body.GetProperty("followerCount").GetInt32(), "没有跟单员时池详情也要能打开");
         Assert.IsFalse(body.GetProperty("isDepositLimited").GetBoolean());
 
@@ -818,6 +819,93 @@ public sealed class PublicPagesApiTests
         JsonElement exposure = body.GetProperty("exposure");
         Assert.AreEqual(0m, exposure.GetProperty("grossExposure").GetDecimal());
         Assert.AreEqual(0, exposure.GetProperty("activePositionCount").GetInt32());
+    }
+
+    [TestMethod]
+    public async Task Stream_LeadDetail_CarriesPositionPnlAndOnlyTheDisplayedMarketOrders()
+    {
+        // 公开详情与工作台共用展示模型：持仓带开仓价/标记价/清算价/逐仓盈亏与 ROI，
+        // 挂单只给当前展示的持仓市场（用于行展开），不把池子的整本挂单摊出去。
+        using PublicPagesApp app = new();
+        app.Upstream.Positions =
+        [
+            new PoolPosition
+            {
+                MarketId = 7,
+                Symbol = "WLD",
+                Side = PositionSide.Long,
+                Size = 1_000m,
+                AvgEntryPrice = PriceAmount.From(0.51924m),
+                Notional = UsdAmount.From(500m),
+                UnrealizedPnl = UsdAmount.From(-19.24m),
+                Margin = MarginFraction.FromPositionPercent(10m),
+                OpenOrderCount = 1,
+                CumulativeFunding = UsdAmount.From(0m),
+                LiquidationPrice = null,
+            },
+        ];
+        app.Upstream.Orders =
+        [
+            new PoolOrder
+            {
+                OrderIndex = 11,
+                ClientOrderIndex = 0,
+                MarketIndex = 7,
+                Side = OrderSide.Buy,
+                Price = PriceAmount.From(0.49m),
+                RemainingBaseAmount = 100m,
+                InitialBaseAmount = 200m,
+                Status = "open",
+                CreatedAt = LighterTimestamp.FromSeconds(1_800_000_000),
+                ExpiresAt = LighterTimestamp.FromSeconds(1_800_086_400),
+            },
+            new PoolOrder
+            {
+                OrderIndex = 12,
+                ClientOrderIndex = 0,
+                MarketIndex = 8,
+                Side = OrderSide.Sell,
+                Price = PriceAmount.From(2m),
+                RemainingBaseAmount = 10m,
+                InitialBaseAmount = 10m,
+                Status = "open",
+                CreatedAt = LighterTimestamp.FromSeconds(1_800_000_000),
+                ExpiresAt = LighterTimestamp.FromSeconds(1_800_086_400),
+            },
+        ];
+
+        await SeedLeadAsync(app, KnownPoolIndex, isEnabled: true);
+
+        using HttpClient client = app.CreateClient();
+        var connection = await OpenSseAsync(client, $"{StreamPath}?lead={KnownPoolIndex}");
+        using HttpResponseMessage response = connection.Response;
+        using StreamReader reader = connection.Reader;
+
+        (string eventName, string data) = await ReadEventAsync(reader);
+        Assert.AreEqual("lead", eventName);
+
+        JsonElement body = JsonDocument.Parse(data).RootElement;
+        JsonElement positions = body.GetProperty("positions");
+
+        Assert.AreEqual(1, positions.GetArrayLength());
+
+        JsonElement position = positions[0];
+        Assert.AreEqual("WLD", position.GetProperty("symbol").GetString());
+        Assert.AreEqual(0.51924m, position.GetProperty("avgEntryPrice").GetDecimal());
+        Assert.AreEqual(0.5m, position.GetProperty("markPrice").GetDecimal());
+        Assert.AreEqual(JsonValueKind.Null, position.GetProperty("liquidationPrice").ValueKind);
+        Assert.AreEqual(-19.24m, position.GetProperty("unrealizedPnl").GetDecimal());
+        Assert.AreEqual(-38.48m, position.GetProperty("unrealizedPnlPercent").GetDecimal());
+        Assert.AreEqual(0m, position.GetProperty("realizedPnl").GetDecimal());
+        Assert.AreEqual(100m, position.GetProperty("weightPercent").GetDecimal());
+
+        JsonElement orders = body.GetProperty("orders");
+        Assert.AreEqual(1, orders.GetArrayLength(), "只带走展示市场的挂单");
+        Assert.AreEqual(7, orders[0].GetProperty("marketId").GetInt32());
+        Assert.AreEqual("buy", orders[0].GetProperty("side").GetString());
+        Assert.AreEqual(0.49m, orders[0].GetProperty("price").GetDecimal());
+        Assert.AreEqual(49m, orders[0].GetProperty("remainingNotional").GetDecimal());
+        Assert.IsTrue(orders[0].GetProperty("isPartiallyFilled").GetBoolean());
     }
 
     [TestMethod]
@@ -1075,6 +1163,11 @@ public sealed class PublicPagesApiTests
             Assert.AreEqual(110m, position.GetProperty("markPrice").GetDecimal());
             Assert.IsTrue(position.GetProperty("hasMark").GetBoolean());
             Assert.AreEqual(5m, position.GetProperty("unrealizedPnl").GetDecimal());
+            Assert.AreEqual(10m, position.GetProperty("initialMarginPercent").GetDecimal());
+
+            // 0.5 × 110 = 55 名义价值；保证金 10% = 5.5；ROI = 5 / 5.5
+            Assert.AreEqual(5.5m, position.GetProperty("marginAmount").GetDecimal());
+            Assert.AreEqual(90.9090909091m, position.GetProperty("unrealizedPnlPercent").GetDecimal(), 0.0000000001m);
             Assert.AreEqual(5m, after.GetProperty("unrealizedPnl").GetDecimal());
             Assert.AreEqual(504.95m, after.GetProperty("equity").GetDecimal());
         }
@@ -1507,6 +1600,7 @@ public sealed class PublicPagesApiTests
             Notional = 50m,
             DepthSufficient = true,
             Fee = 0.05m,
+            InitialMarginPercent = 10m,
             ObservedAtUtc = DateTimeOffset.UtcNow,
         });
 

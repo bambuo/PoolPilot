@@ -64,8 +64,11 @@ public sealed record PublicLeadTraderDetailDto
 
     public required PublicLeadExposureDto Exposure { get; init; }
 
-    /// <summary>按名义额降序的前几大持仓；只给标的、方向、名义额、占比。</summary>
+    /// <summary>按名义额降序的前几大持仓。</summary>
     public required IReadOnlyList<PublicLeadPositionDto> Positions { get; init; }
+
+    /// <summary>这些持仓市场的未成交挂单；只用于持仓行展开区，不单列成行情阶梯。</summary>
+    public required IReadOnlyList<PublicLeadOrderDto> Orders { get; init; }
 
     /// <summary>最近一段净值曲线（按时间升序，已截断）。</summary>
     public required IReadOnlyList<PublicLeadNavPointDto> NavCurve { get; init; }
@@ -113,7 +116,12 @@ public sealed record PublicLeadExposureDto
     public required int ActivePositionCount { get; init; }
 }
 
-/// <summary>公开详情里的前几大持仓（不包含入场价、标记价、杠杆与清算价）。</summary>
+/// <summary>
+/// 公开详情里的前几大持仓。
+///
+/// 带单广场与工作台共用同一套展示列：开仓价、标记价、清算价、已实现/未实现盈亏
+/// 与投资回报率。公开侧仍只取前几大，不把整本账摊开。
+/// </summary>
 public sealed record PublicLeadPositionDto
 {
     public required int MarketId { get; init; }
@@ -123,10 +131,44 @@ public sealed record PublicLeadPositionDto
     /// <summary><c>long</c> / <c>short</c>。</summary>
     public required string Side { get; init; }
 
+    public required decimal AvgEntryPrice { get; init; }
+
+    public required decimal MarkPrice { get; init; }
+
+    /// <summary>没有正清算价时为 null（全仓保证金下的结构性结果，不是缺失）。</summary>
+    public required decimal? LiquidationPrice { get; init; }
+
     public required decimal Notional { get; init; }
 
     /// <summary>占池子总敞口的比例（百分数）。</summary>
     public required decimal WeightPercent { get; init; }
+
+    /// <summary>近端成交窗口内已平仓轮次的毛利合计；上游持仓不提供逐仓已实现盈亏。</summary>
+    public required decimal RealizedPnl { get; init; }
+
+    public required decimal UnrealizedPnl { get; init; }
+
+    /// <summary>未实现盈亏 ÷ 保证金；取不到保证金率时为 null。</summary>
+    public required decimal? UnrealizedPnlPercent { get; init; }
+}
+
+/// <summary>公开详情里当前持仓市场的挂单（只服务持仓行的展开区）。</summary>
+public sealed record PublicLeadOrderDto
+{
+    public required int MarketId { get; init; }
+
+    public required long OrderIndex { get; init; }
+
+    /// <summary><c>buy</c> / <c>sell</c>。</summary>
+    public required string Side { get; init; }
+
+    public required decimal Price { get; init; }
+
+    public required decimal RemainingSize { get; init; }
+
+    public required decimal RemainingNotional { get; init; }
+
+    public required bool IsPartiallyFilled { get; init; }
 }
 
 /// <summary>公开详情里的净值点。</summary>
@@ -371,6 +413,24 @@ public sealed record PublicPositionDto
 
     public required decimal RealizedPnl { get; init; }
 
+    /// <summary>源池初始保证金率（百分数）；取不到时为 null。</summary>
+    public required decimal? InitialMarginPercent { get; init; }
+
+    /// <summary>保证金占用额；取不到时为 null。</summary>
+    public required decimal? MarginAmount { get; init; }
+
+    /// <summary>维持保证金率（百分数）；行情补丁重算清算价用。</summary>
+    public required decimal MaintenanceMarginPercent { get; init; }
+
+    /// <summary>未实现盈亏 ÷ 保证金（百分数）；不可得时为 null。</summary>
+    public required decimal? UnrealizedPnlPercent { get; init; }
+
+    /// <summary>账户级清算价；不存在正数解时为 null。</summary>
+    public required decimal? LiquidationPrice { get; init; }
+
+    /// <summary>距清算幅度（百分数，空头为正、多头为负）。</summary>
+    public required decimal? LiquidationDistancePercent { get; init; }
+
     /// <summary>跟踪偏差占目标的比例（百分数）。目标为 0 时为 0。</summary>
     public required decimal TrackingDeviationPercent { get; init; }
 }
@@ -396,6 +456,12 @@ public sealed record PublicFillDto
     public required decimal Fee { get; init; }
 
     public required decimal RealizedPnl { get; init; }
+
+    /// <summary>这笔动作对应的保证金率（百分数）；旧流水没有记录且源池无该仓时为 null。</summary>
+    public required decimal? InitialMarginPercent { get; init; }
+
+    /// <summary>是否缩小了敞口（平仓/减仓）。</summary>
+    public required bool IsReducing { get; init; }
 
     /// <summary>是否真的成交。</summary>
     public required bool IsFilled { get; init; }

@@ -3,9 +3,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { api, type PoolDetail, type PoolPosition } from '@/api/client'
+import DirectionMark from '@/components/DirectionMark.vue'
 import HeaderHint from '@/components/HeaderHint.vue'
 import LineChart from '@/components/LineChart.vue'
 import MetricTile from '@/components/MetricTile.vue'
+import SymbolName from '@/components/SymbolName.vue'
 import {
   formatCompact,
   formatDate,
@@ -13,7 +15,6 @@ import {
   formatNumber,
   formatPercent,
   formatUsd,
-  sideLabel,
 } from '@/utils/format'
 
 /// 池详情。
@@ -339,12 +340,14 @@ onMounted(load)
             :pagination="false"
           >
             <template #columns>
-              <a-table-column title="市场" data-index="symbol" :width="110" />
+              <a-table-column title="市场" :width="120">
+                <template #cell="{ record }">
+                  <SymbolName :symbol="record.symbol" />
+                </template>
+              </a-table-column>
               <a-table-column title="方向" :width="70">
                 <template #cell="{ record }">
-                  <a-tag size="small" :color="record.side === 'long' ? 'green' : 'red'">
-                    {{ sideLabel(record.side) }}
-                  </a-tag>
+                  <DirectionMark :side="record.side" />
                 </template>
               </a-table-column>
               <a-table-column title="数量" :width="120" align="right">
@@ -446,7 +449,7 @@ onMounted(load)
                 v-if="laddersByMarket.length > 1"
                 style="font-size: 13px; font-weight: 500; margin-bottom: 10px"
               >
-                {{ ladder.symbol }}
+                <SymbolName :symbol="ladder.symbol" compact />
               </div>
 
               <a-grid :cols="2" :col-gap="28">
@@ -521,7 +524,11 @@ onMounted(load)
             <template #columns>
               <!-- 表头此前写作 "#"，容易被读成行号 1/2/3；实际是上游的订单 ID（17 位）。
                    实测该值到 1.3e16，远超 int32，后端用 long 承载。 -->
-              <a-table-column title="市场" data-index="symbol" :width="95" />
+              <a-table-column title="市场" :width="120">
+                <template #cell="{ record }">
+                  <SymbolName :symbol="record.symbol" />
+                </template>
+              </a-table-column>
               <a-table-column title="订单 ID" :width="150">
                 <template #title>
                   <HeaderHint
@@ -613,12 +620,14 @@ onMounted(load)
             <template #columns>
               <!-- 绑 symbol 而不是 marketId：编号 45/60 对人不具可读性，
                    符号由合约规格表解析（含池子已平掉的历史市场） -->
-              <a-table-column title="市场" data-index="symbol" :width="95" />
+              <a-table-column title="市场" :width="120">
+                <template #cell="{ record }">
+                  <SymbolName :symbol="record.symbol" />
+                </template>
+              </a-table-column>
               <a-table-column title="方向" :width="70">
                 <template #cell="{ record }">
-                  <a-tag size="small" :color="record.side === 'long' ? 'green' : 'red'">
-                    {{ sideLabel(record.side) }}
-                  </a-tag>
+                  <DirectionMark :side="record.side" />
                 </template>
               </a-table-column>
               <a-table-column title="入场量" :width="115" align="right">

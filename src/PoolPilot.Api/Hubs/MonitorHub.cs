@@ -70,7 +70,9 @@ public sealed class MonitorHub(
 /// 那时需要一个地方回答"此刻状态是什么"。这个字段就是那个地方——由推送本身体写入，
 /// 因此不会和实际推送出去的内容不一致。
 /// </summary>
-public sealed class SignalRMonitorBroadcaster(IHubContext<MonitorHub> hub) : IMonitorBroadcaster
+public sealed class SignalRMonitorBroadcaster(
+    IHubContext<MonitorHub> hub,
+    IFollowerLiveBroadcaster followerLive) : IMonitorBroadcaster
 {
     public MonitorStatusDto? CurrentStatus { get; private set; }
 
@@ -80,12 +82,20 @@ public sealed class SignalRMonitorBroadcaster(IHubContext<MonitorHub> hub) : IMo
     public Task BroadcastCopyFillAsync(CopyFillDto fill, CancellationToken cancellationToken = default) =>
         hub.Clients.All.SendAsync("copyFill", fill, cancellationToken);
 
-    public Task BroadcastLiveAccountAsync(
+    public async Task BroadcastLiveAccountAsync(
         long followerId,
         LiveAccountDto account,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default)
+    {
         // 事件名带上跟单员 Id：同一个账号下可能挂着多个跟单员，页面只认自己那一个
-        hub.Clients.All.SendAsync("liveAccount", followerId, account, cancellationToken);
+        await hub.Clients.All.SendAsync("liveAccount", followerId, account, cancellationToken)
+            .ConfigureAwait(false);
+
+        // 实盘账户变化也会改变卡片摘要与详情里的仓位；走跟单 Hub 让列表重取一次。
+        // 只有"账户变了"才发，不跟每秒的 livePnl，否则会把列表打成轮询。
+        await followerLive.BroadcastFollowerChangedAsync(followerId, cancellationToken)
+            .ConfigureAwait(false);
+    }
 
     public Task BroadcastLivePnlAsync(
         long followerId,

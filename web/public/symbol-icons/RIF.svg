@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generator: visioncortex VTracer 0.6.12 -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="250" height="250">
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 27.06 20 54.12 20 82 C13.4 82 6.8 82 0 82 C0 54.94 0 27.88 0 0 Z " fill="#139CD8" transform="translate(100,149)"/>
+<path d="M0 0 C27.06 0 54.12 0 82 0 C82 6.6 82 13.2 82 20 C54.94 20 27.88 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139CD9" transform="translate(149,130)"/>
+<path d="M0 0 C27.06 0 54.12 0 82 0 C82 6.6 82 13.2 82 20 C54.94 20 27.88 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139CD9" transform="translate(19,100)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 27.06 20 54.12 20 82 C13.4 82 6.8 82 0 82 C0 54.94 0 27.88 0 0 Z " fill="#139CD8" transform="translate(130,19)"/>
+<path d="M0 0 C19.14 0 38.28 0 58 0 C58 6.6 58 13.2 58 20 C38.86 20 19.72 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139DD9" transform="translate(134,163)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 19.14 20 38.28 20 58 C13.4 58 6.8 58 0 58 C0 38.86 0 19.72 0 0 Z " fill="#139CD8" transform="translate(67,134)"/>
+<path d="M0 0 C19.14 0 38.28 0 58 0 C58 6.6 58 13.2 58 20 C38.86 20 19.72 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139DD9" transform="translate(58,67)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 19.14 20 38.28 20 58 C13.4 58 6.8 58 0 58 C0 38.86 0 19.72 0 0 Z " fill="#139CD8" transform="translate(163,58)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 6.93 20 13.86 20 21 C13.4 21 6.8 21 0 21 C0 14.07 0 7.14 0 0 Z " fill="#139CD8" transform="translate(134,196)"/>
+<path d="M0 0 C6.93 0 13.86 0 21 0 C21 6.6 21 13.2 21 20 C14.07 20 7.14 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139CD8" transform="translate(33,134)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 6.93 20 13.86 20 21 C13.4 21 6.8 21 0 21 C0 14.07 0 7.14 0 0 Z " fill="#139CD8" transform="translate(96,33)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 6.6 20 13.2 20 20 C13.4 20 6.8 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139CD8" transform="translate(134,230)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 6.6 20 13.2 20 20 C13.4 20 6.8 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139CD8" transform="translate(0,134)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 6.6 20 13.2 20 20 C13.4 20 6.8 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139CD8" transform="translate(230,96)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 6.6 20 13.2 20 20 C13.4 20 6.8 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139CD8" transform="translate(197,96)"/>
+<path d="M0 0 C6.6 0 13.2 0 20 0 C20 6.6 20 13.2 20 20 C13.4 20 6.8 20 0 20 C0 13.4 0 6.8 0 0 Z " fill="#139CD8" transform="translate(96,0)"/>
+</svg>

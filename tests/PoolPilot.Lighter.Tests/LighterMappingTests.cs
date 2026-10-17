@@ -85,6 +85,7 @@ public sealed class LighterMappingTests
             SupportedPriceDecimals = 3,
             TakerFee = 0.0004m,
             MakerFee = 0.0002m,
+            MaintenanceMarginFraction = 600m,
         };
 
         PoolPilot.Domain.Entities.InstrumentSpec spec = LighterClientExtensions.MapInstrument(symbol);
@@ -97,5 +98,8 @@ public sealed class LighterMappingTests
         // 费率是百分数原值（"0.0004" 表示 0.0004%），不做缩放
         Assert.AreEqual(0.0004m, spec.TakerFeePercent);
         Assert.AreEqual(0.0002m, spec.MakerFeePercent);
+
+        // orderBookDetails 的整数刻度 ÷10000 成比例，再 ×100 成百分数：600 → 6%
+        Assert.AreEqual(6m, spec.MaintenanceMarginPercent);
     }
 }

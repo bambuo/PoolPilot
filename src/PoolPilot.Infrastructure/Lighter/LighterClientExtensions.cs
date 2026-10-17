@@ -171,6 +171,10 @@ internal static class LighterClientExtensions
             PriceDecimals = symbol.SupportedPriceDecimals,
             TakerFeePercent = symbol.TakerFee,
             MakerFeePercent = symbol.MakerFee,
+
+            // 上游这个字段是整数刻度：1200 → 12%。先 ÷10000 成比例，再 ×100 成百分数，
+            // 合起来就是 ÷100；与 positions[].initial_margin_fraction 的百分数口径分开记。
+            MaintenanceMarginPercent = symbol.MaintenanceMarginFraction / 100m,
         };
     }
 

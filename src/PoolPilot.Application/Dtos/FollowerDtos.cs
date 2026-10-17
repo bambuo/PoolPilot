@@ -104,6 +104,26 @@ public sealed record PaperPositionDto
 
     public required decimal RealizedPnl { get; init; }
 
+    // ── 保证金口径 ────────────────────────────────────────
+
+    /// <summary>源池的初始保证金率（百分数）；取不到时为 null。</summary>
+    public required decimal? InitialMarginPercent { get; init; }
+
+    /// <summary>保证金占用额（名义价值 × 初始保证金率）；取不到时为 null。</summary>
+    public required decimal? MarginAmount { get; init; }
+
+    /// <summary>维持保证金率（百分数）；账户级清算价要用它。取不到合约规格时为 0。</summary>
+    public required decimal MaintenanceMarginPercent { get; init; }
+
+    /// <summary>未实现盈亏 ÷ 保证金（百分数）；保证金不可得时为 null。</summary>
+    public required decimal? UnrealizedPnlPercent { get; init; }
+
+    /// <summary>账户级清算价；不存在正数解时为 null（与上游池持仓同口径）。</summary>
+    public required decimal? LiquidationPrice { get; init; }
+
+    /// <summary>距清算幅度（百分数，空头为正、多头为负）；无正清算价时为 null。</summary>
+    public required decimal? LiquidationDistancePercent { get; init; }
+
     // ── 跟踪偏差 ──────────────────────────────────────────
 
     /// <summary>池子在该市场的带符号仓位。</summary>
@@ -140,6 +160,15 @@ public sealed record PaperFillDto
     public required decimal Fee { get; init; }
 
     public required decimal RealizedPnl { get; init; }
+
+    /// <summary>
+    /// 这笔动作对应的保证金率（百分数）。减仓行优先取原仓位的建仓保证金率，
+    /// 开仓/加仓取源池当时值；旧流水没有记录时退回源池当前值。
+    /// </summary>
+    public required decimal? InitialMarginPercent { get; init; }
+
+    /// <summary>这一笔是否缩小了敞口（平仓/减仓）。只有这类行有已实现盈亏与 ROI。</summary>
+    public required bool IsReducing { get; init; }
 
     /// <summary>是否真的成交。</summary>
     public required bool IsFilled { get; init; }

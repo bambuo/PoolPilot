@@ -26,7 +26,7 @@ public sealed class MonitorHubAuthorizationTests
         // 零权限：menu:graph 的 view 判不过
         RecordingPermissionEvaluator evaluator = new((_, _) => false);
         RecordingClientProxy proxy = new();
-        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)));
+        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)), new NoopFollowerLiveBroadcaster());
         await broadcaster.BroadcastStatusAsync(Status());
 
         StubHubCallerContext context = new(userIdentifier: "7");
@@ -55,7 +55,7 @@ public sealed class MonitorHubAuthorizationTests
         RecordingPermissionEvaluator evaluator = new(
             (key, action) => key == PermissionKeys.Graph && action == MenuActions.View);
         RecordingClientProxy proxy = new();
-        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)));
+        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)), new NoopFollowerLiveBroadcaster());
         await broadcaster.BroadcastStatusAsync(Status());
 
         StubHubCallerContext context = new(userIdentifier: "7");
@@ -83,4 +83,14 @@ public sealed class MonitorHubAuthorizationTests
         SubscribedChannels = ["account_all_positions/281474976552443"],
         LastMessageAt = null,
     };
+}
+
+/// <summary>监控 Hub 测试不关心跟单实时通道；这里只提供空实现。</summary>
+internal sealed class NoopFollowerLiveBroadcaster : IFollowerLiveBroadcaster
+{
+    public Task BroadcastFollowerChangedAsync(long followerId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
+    public Task BroadcastMarketPriceAsync(int marketId, decimal price, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
 }

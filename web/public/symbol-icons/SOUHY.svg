@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generator: visioncortex VTracer 0.6.12 -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="250" height="250">
+<path d="M0 0 C8.25 0 16.5 0 25 0 C24.67 37.62 24.34 75.24 24 114 C16.08 114 8.16 114 0 114 C0 76.38 0 38.76 0 0 Z " fill="#EADA22" transform="translate(181,0)"/>
+<path d="M0 0 C37.62 0 75.24 0 114 0 C114 7.92 114 15.84 114 24 C76.38 24 38.76 24 0 24 C0 16.08 0 8.16 0 0 Z " fill="#EADA22" transform="translate(136,181)"/>
+<path d="M0 0 C7.92 0 15.84 0 24 0 C24 37.62 24 75.24 24 114 C16.08 114 8.16 114 0 114 C0 76.38 0 38.76 0 0 Z " fill="#E9D922" transform="translate(45,136)"/>
+<path d="M0 0 C37.62 0 75.24 0 114 0 C114 7.92 114 15.84 114 24 C76.38 24 38.76 24 0 24 C0 16.08 0 8.16 0 0 Z " fill="#E8D821" transform="translate(136,136)"/>
+<path d="M0 0 C7.92 0 15.84 0 24 0 C24 37.62 24 75.24 24 114 C16.08 114 8.16 114 0 114 C0 76.38 0 38.76 0 0 Z " fill="#E9DA22" transform="translate(0,136)"/>
+<path d="M0 0 C37.62 0 75.24 0 114 0 C114 7.92 114 15.84 114 24 C76.38 24 38.76 24 0 24 C0 16.08 0 8.16 0 0 Z " fill="#EADB21" transform="translate(0,90)"/>
+<path d="M0 0 C37.62 0 75.24 0 114 0 C114 7.92 114 15.84 114 24 C76.38 24 38.76 24 0 24 C0 16.08 0 8.16 0 0 Z " fill="#EADA22" transform="translate(0,45)"/>
+<path d="M0 0 C7.92 0 15.84 0 24 0 C24 37.62 24 75.24 24 114 C16.08 114 8.16 114 0 114 C0 76.38 0 38.76 0 0 Z " fill="#E9D922" transform="translate(226,0)"/>
+<path d="M0 0 C7.92 0 15.84 0 24 0 C24 37.62 24 75.24 24 114 C16.08 114 8.16 114 0 114 C0 76.38 0 38.76 0 0 Z " fill="#E9D921" transform="translate(136,0)"/>
+<path d="M0 0 C37.62 0 75.24 0 114 0 C114 7.59 114 15.18 114 23 C76.38 23 38.76 23 0 23 C0 15.41 0 7.82 0 0 Z " fill="#E9DA22" transform="translate(136,227)"/>
+<path d="M0 0 C7.59 0 15.18 0 23 0 C23 37.62 23 75.24 23 114 C15.41 114 7.82 114 0 114 C0 76.38 0 38.76 0 0 Z " fill="#E9D922" transform="translate(91,136)"/>
+<path d="M0 0 C37.62 0 75.24 0 114 0 C114 7.59 114 15.18 114 23 C76.38 23 38.76 23 0 23 C0 15.41 0 7.82 0 0 Z " fill="#EAD922" transform="translate(0,0)"/>
+</svg>

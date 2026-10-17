@@ -45,6 +45,7 @@ public sealed class LeadTraderHostedService(
     IMonitorBroadcaster broadcaster,
     IMarkPriceSink markPrices,
     IMarketPriceActivity marketPrices,
+    IFollowerLiveBroadcaster followerLive,
     IOptions<LeadTraderOptions> options,
     ILogger<LeadTraderHostedService> logger) : BackgroundService
 {
@@ -221,7 +222,7 @@ public sealed class LeadTraderHostedService(
         if (message.TryGetProperty("market_stats", out JsonElement marketStats)
             && marketStats.ValueKind == JsonValueKind.Object)
         {
-            HandleMarketStats(marketStats);
+            await HandleMarketStats(marketStats, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -265,7 +266,7 @@ public sealed class LeadTraderHostedService(
     /// 一帧 <c>market_stats</c>：取中间价（缺失时退回标记价）写入估值缓存，并通知公开页。
     /// 估值口径与原来的 REST 盘口中间价一致；交易/成交路径不走这里。
     /// </summary>
-    private void HandleMarketStats(JsonElement stats)
+    private async Task HandleMarketStats(JsonElement stats, CancellationToken cancellationToken)
     {
         if (!stats.TryGetProperty("market_id", out JsonElement idElement)
             || idElement.ValueKind != JsonValueKind.Number
@@ -284,6 +285,8 @@ public sealed class LeadTraderHostedService(
         PriceAmount price = PriceAmount.From(mid.Value);
         markPrices.Update(marketId, price);
         marketPrices.NotifyMarketPriceChanged(marketId, price);
+        await followerLive.BroadcastMarketPriceAsync(marketId, price.Value, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static decimal? ReadDecimal(JsonElement element, string name)

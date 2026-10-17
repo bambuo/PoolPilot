@@ -35,7 +35,7 @@ public sealed class MonitorStatusChannelTests
     {
         // Arrange
         RecordingClientProxy proxy = new();
-        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)));
+        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)), new NoopFollowerLiveBroadcaster());
         MonitorStatusDto status = Status("first_connect", isConnected: true);
 
         // Act
@@ -50,7 +50,7 @@ public sealed class MonitorStatusChannelTests
     {
         // Arrange
         RecordingClientProxy proxy = new();
-        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)));
+        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)), new NoopFollowerLiveBroadcaster());
 
         // Act
         broadcaster.BroadcastStatusAsync(Status("event", isConnected: true)).GetAwaiter().GetResult();
@@ -65,7 +65,7 @@ public sealed class MonitorStatusChannelTests
     {
         // Arrange —— 模拟"浏览器在状态变化之后才打开页面"
         RecordingClientProxy proxy = new();
-        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)));
+        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)), new NoopFollowerLiveBroadcaster());
         broadcaster.BroadcastStatusAsync(Status("first_connect", isConnected: true)).GetAwaiter().GetResult();
         proxy.Sent.Clear();
 
@@ -89,7 +89,7 @@ public sealed class MonitorStatusChannelTests
     {
         // Arrange —— 监控服务还没跑起来时不该编造状态
         RecordingClientProxy proxy = new();
-        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)));
+        SignalRMonitorBroadcaster broadcaster = new(new StubHubContext(new RecordingHubClients(proxy)), new NoopFollowerLiveBroadcaster());
         MonitorHub hub = new(broadcaster, PermissiveEvaluator(), NullLogger<MonitorHub>.Instance)
         {
             Clients = new RecordingHubClients(proxy),
@@ -113,5 +113,63 @@ public sealed class MonitorStatusChannelTests
 
         // Act + Assert
         Assert.IsNull(status.LastMessageAt);
+    }
+
+    [TestMethod]
+    public async Task BroadcastLiveAccount_AlsoNotifiesTheFollowerChannel()
+    {
+        // 实盘账户变化改变卡片摘要与详情里的仓位。只推 liveAccount 不够：
+        // 跟单列表/详情还挂在 /hubs/followers 上，必须让它们知道"该重取了"。
+        RecordingClientProxy proxy = new();
+        RecordingFollowerLiveBroadcaster followerLive = new();
+        SignalRMonitorBroadcaster broadcaster = new(
+            new StubHubContext(new RecordingHubClients(proxy)),
+            followerLive);
+
+        LiveAccountDto account = new()
+        {
+            FollowerId = 9,
+            ExchangeConfigId = 3,
+            ExchangeName = "币安 主账号",
+            Platform = "binance",
+            WalletBalance = 1_000m,
+            AvailableBalance = 800m,
+            UnrealizedPnl = 12m,
+            GrossNotional = 2_000m,
+            IsHedgeMode = false,
+            InitialCapital = 500m,
+            Positions = [],
+        };
+
+        await broadcaster.BroadcastLiveAccountAsync(9, account);
+
+        Assert.HasCount(1, proxy.Sent);
+        Assert.AreEqual("liveAccount", proxy.Sent[0].Method);
+        Assert.AreEqual(9L, proxy.Sent[0].Args[0]);
+
+        Assert.HasCount(1, followerLive.FollowerChanges, "账户变化必须同时通知跟单通道");
+        Assert.AreEqual(9L, followerLive.FollowerChanges[0]);
+    }
+}
+
+/// <summary>记录跟单通道收到过哪些"该刷新了"，不连 SignalR。</summary>
+internal sealed class RecordingFollowerLiveBroadcaster : IFollowerLiveBroadcaster
+{
+    public List<long> FollowerChanges { get; } = [];
+
+    public List<(int MarketId, decimal Price)> MarketPrices { get; } = [];
+
+    public Task BroadcastFollowerChangedAsync(long followerId, CancellationToken cancellationToken = default)
+    {
+        FollowerChanges.Add(followerId);
+
+        return Task.CompletedTask;
+    }
+
+    public Task BroadcastMarketPriceAsync(int marketId, decimal price, CancellationToken cancellationToken = default)
+    {
+        MarketPrices.Add((marketId, price));
+
+        return Task.CompletedTask;
     }
 }

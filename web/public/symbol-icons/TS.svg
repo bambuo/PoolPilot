@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generator: visioncortex VTracer 0.6.12 -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="250" height="250">
+<path d="M0 0 C82.5 0 165 0 250 0 C250 16.83 250 33.66 250 51 C167.5 51 85 51 0 51 C0 34.17 0 17.34 0 0 Z " fill="#00A74D" transform="translate(0,99)"/>
+<path d="M0 0 C82.5 0 165 0 250 0 C250 8.58 250 17.16 250 26 C167.5 26 85 26 0 26 C0 17.42 0 8.84 0 0 Z " fill="#A81F8B" transform="translate(0,171)"/>
+<path d="M0 0 C82.5 0 165 0 250 0 C250 8.58 250 17.16 250 26 C167.5 26 85 26 0 26 C0 17.42 0 8.84 0 0 Z " fill="#0066B3" transform="translate(0,52)"/>
+<path d="M0 0 C82.5 0 165 0 250 0 C250 4.62 250 9.24 250 14 C167.5 14 85 14 0 14 C0 9.38 0 4.76 0 0 Z " fill="#0063AE" transform="translate(0,210)"/>
+<path d="M0 0 C82.5 0 165 0 250 0 C250 4.62 250 9.24 250 14 C167.5 14 85 14 0 14 C0 9.38 0 4.76 0 0 Z " fill="#00A74E" transform="translate(0,25)"/>
+<path d="M0 0 C82.5 0 165 0 250 0 C250 2.97 250 5.94 250 9 C167.5 9 85 9 0 9 C0 6.03 0 3.06 0 0 Z " fill="#00A74E" transform="translate(0,234)"/>
+<path d="M0 0 C82.5 0 165 0 250 0 C250 2.97 250 5.94 250 9 C167.5 9 85 9 0 9 C0 6.03 0 3.06 0 0 Z " fill="#A8208D" transform="translate(0,7)"/>
+</svg>

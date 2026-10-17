@@ -39,6 +39,7 @@ public sealed class PaperLedgerTests
         PriceDecimals = 5,
         TakerFeePercent = 0m,
         MakerFeePercent = 0m,
+        MaintenanceMarginPercent = 6m,
     };
 
     /// <summary>实测形态盘口：价差约 2 bps，深度足够。</summary>
@@ -388,6 +389,39 @@ public sealed class PaperLedgerTests
         Assert.AreEqual(1.5m, book.Fees.Value);
     }
 
+    [TestMethod]
+    public void Replay_WithSourceMarginPercent_KeepsItAcrossReducesAndClearsOnClose()
+    {
+        PaperBook open = PaperLedger.Replay(
+        [
+            Fill(size: 100m, price: 0.25m, before: 0m, after: 100m, margin: 10m, hour: 0),
+            Fill(size: 40m, price: 0.30m, before: 100m, after: 60m, margin: 20m, hour: 1),
+        ]);
+
+        Assert.AreEqual(10m, open.Positions[29].InitialMarginPercent, "减仓不改建仓保证金率");
+
+        PaperBook closed = PaperLedger.Replay(
+        [
+            Fill(size: 100m, price: 0.25m, before: 0m, after: 100m, margin: 10m, hour: 0),
+            Fill(size: 100m, price: 0.30m, before: 100m, after: 0m, margin: 20m, hour: 1),
+        ]);
+
+        Assert.IsNull(closed.Positions[29].InitialMarginPercent, "平仓后保证金率必须清掉");
+    }
+
+    [TestMethod]
+    public void Replay_WithDifferentAddMargins_WeightsByNotional()
+    {
+        // 100 @ 0.25 × 10% + 100 @ 0.30 × 20% → (25×10 + 30×20) / 55 = 15.4545%
+        PaperBook book = PaperLedger.Replay(
+        [
+            Fill(size: 100m, price: 0.25m, before: 0m, after: 100m, margin: 10m, hour: 0),
+            Fill(size: 100m, price: 0.30m, before: 100m, after: 200m, margin: 20m, hour: 1),
+        ]);
+
+        Assert.AreEqual(15.4545454545m, book.Positions[29].InitialMarginPercent!.Value, 0.0000000001m);
+    }
+
     // ── 盯市估值 ──────────────────────────────────────────
 
     [TestMethod]
@@ -519,7 +553,8 @@ public sealed class PaperLedgerTests
         OrderSide side = OrderSide.Buy,
         decimal realized = 0m,
         decimal fee = 0m,
-        int hour = 0) => new()
+        int hour = 0,
+        decimal? margin = null) => new()
     {
         FollowerId = 1L,
         MarketId = 29,
@@ -536,6 +571,7 @@ public sealed class PaperLedgerTests
         DepthSufficient = true,
         Fee = UsdAmount.From(fee),
         RealizedPnl = UsdAmount.From(realized),
+        InitialMarginPercent = margin,
         SkipReason = null,
         ObservedAt = LighterTimestamp.FromSeconds(1_800_000_000 + (hour * 3600)),
     };

@@ -34,7 +34,19 @@ internal sealed class RecordingClientProxy : IClientProxy
 /// <summary>所有调用目标都指向同一个记录器——测试关心的是"发了什么"，不是"发给谁"。</summary>
 internal sealed class RecordingHubClients(RecordingClientProxy proxy) : IHubClients, IHubCallerClients
 {
-    public IClientProxy All => proxy;
+    /// <summary>按调用顺序记下选中的投递目标（<c>all</c> 或 <c>group:xxx</c>），
+    /// 用来断言广播走的是全体还是某个分组。</summary>
+    public List<string> Targets { get; } = [];
+
+    public IClientProxy All
+    {
+        get
+        {
+            Targets.Add("all");
+
+            return proxy;
+        }
+    }
 
     public IClientProxy Caller => proxy;
 
@@ -46,7 +58,12 @@ internal sealed class RecordingHubClients(RecordingClientProxy proxy) : IHubClie
 
     public IClientProxy Clients(IReadOnlyList<string> connectionIds) => proxy;
 
-    public IClientProxy Group(string groupName) => proxy;
+    public IClientProxy Group(string groupName)
+    {
+        Targets.Add($"group:{groupName}");
+
+        return proxy;
+    }
 
     public IClientProxy GroupExcept(string groupName, IReadOnlyList<string> excludedConnectionIds) => proxy;
 
@@ -68,12 +85,27 @@ internal sealed class StubHubContext(RecordingHubClients clients) : IHubContext<
     public IGroupManager Groups => new StubGroupManager();
 }
 
+internal sealed class StubFollowerHubContext(RecordingHubClients clients, IGroupManager groups)
+    : IHubContext<Hubs.FollowerHub>
+{
+    public IHubClients Clients => clients;
+
+    public IGroupManager Groups => groups;
+}
+
 internal sealed class StubGroupManager : IGroupManager
 {
+    public List<(string ConnectionId, string GroupName)> Added { get; } = [];
+
     public Task AddToGroupAsync(
         string connectionId,
         string groupName,
-        CancellationToken cancellationToken = default) => Task.CompletedTask;
+        CancellationToken cancellationToken = default)
+    {
+        Added.Add((connectionId, groupName));
+
+        return Task.CompletedTask;
+    }
 
     public Task RemoveFromGroupAsync(
         string connectionId,
