@@ -117,6 +117,7 @@ public sealed class GetPublicLeadTraderDetailUseCase(
                         : Math.Abs(p.Notional.Value) / gross * 100m,
                     RealizedPnl = realizedByMarket.GetValueOrDefault(p.MarketId),
                     UnrealizedPnl = p.UnrealizedPnl.Value,
+                    Leverage = p.Margin?.Leverage,
                     UnrealizedPnlPercent = p.UnrealizedPnlPercent?.Percent,
                 }),
         ];

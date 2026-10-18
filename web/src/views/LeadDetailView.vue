@@ -97,6 +97,7 @@ const content = computed<LeadDetailViewData | null>(() => {
       weightPercent: gross <= 0 ? 0 : (Math.abs(position.notional) / gross) * 100,
       realizedPnl: realizedByMarket.get(position.marketId) ?? 0,
       unrealizedPnl: position.unrealizedPnl,
+      leverage: position.leverage,
       unrealizedPnlPercent: position.unrealizedPnlPercent,
     })),
     orders: pool.value.orders.map((order) => ({

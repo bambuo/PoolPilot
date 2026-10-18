@@ -17,6 +17,7 @@ import {
   formatPercent,
   formatUsd,
 } from '@/utils/format'
+import { leverageText } from '@/utils/leverage'
 
 /// 带单员详情的共享展示区。
 ///
@@ -25,7 +26,7 @@ import {
 /// 并把数据映射成 `LeadDetailViewData`。
 const props = defineProps<{ data: LeadDetailViewData }>()
 
-/// 数值列统一不换行。持仓表固定 1100px 宽：六位小数的大价格（如 BTC）
+/// 数值列统一不换行。持仓表固定 1180px 宽：六位小数的大价格（如 BTC）
 /// 需要 120px 以上的列宽；容器更窄时横向滚动，左右固定列保持可见。
 const numericCellStyle = {
   whiteSpace: 'nowrap',
@@ -266,7 +267,7 @@ function pnlColor(value: number): string {
         :bordered="false"
         :pagination="false"
         :expandable="{ width: 44 }"
-        :scroll="{ x: 1100 }"
+        :scroll="{ x: 1180 }"
         row-class="expandable-row"
         @row-click="toggleExpanded"
       >
@@ -282,6 +283,29 @@ function pnlColor(value: number): string {
           <a-table-column title="方向" :width="60" align="center" fixed="left">
             <template #cell="{ record }">
               <DirectionMark :side="record.side" />
+            </template>
+          </a-table-column>
+          <a-table-column
+            title="杠杆"
+            align="right"
+            :width="80"
+            :header-cell-style="numericCellStyle"
+            :body-cell-style="numericCellStyle"
+          >
+            <template #title>
+              <a-tooltip
+                content="该仓位当前的最大杠杆倍数（1 ÷ 保证金率）；上游未给有效保证金率时为 —。"
+              >
+                <span>杠杆</span>
+              </a-tooltip>
+            </template>
+            <template #cell="{ record }">
+              <span
+                class="price-cell"
+                :style="{ color: record.leverage === null ? 'var(--color-text-3)' : undefined }"
+              >
+                {{ leverageText(record.leverage) }}
+              </span>
             </template>
           </a-table-column>
           <a-table-column

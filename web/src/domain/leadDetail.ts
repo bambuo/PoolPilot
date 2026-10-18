@@ -37,6 +37,8 @@ export interface LeadDetailPosition {
   /** 近端成交窗口内已平仓轮次的毛利合计；上游持仓不提供逐仓已实现盈亏。 */
   realizedPnl: number
   unrealizedPnl: number
+  /** 该仓位当前的最大杠杆倍数（1 ÷ 保证金率）；上游未给有效保证金率时为 null。 */
+  leverage: number | null
   /** 未实现盈亏 ÷ 保证金；取不到保证金率时为 null。 */
   unrealizedPnlPercent: number | null
 }

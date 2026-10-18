@@ -161,7 +161,8 @@ export async function disconnectMonitorHub(): Promise<void> {
   starting = null
 
   if (current !== null) {
-    await current.stop()
+    // 连接可能已经处于断开/重连状态，stop() 在这里失败不该让登出流程停摆
+    await current.stop().catch(() => undefined)
   }
 
   state.value = 'disconnected'

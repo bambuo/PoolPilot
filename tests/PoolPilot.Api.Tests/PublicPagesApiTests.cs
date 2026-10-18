@@ -894,6 +894,7 @@ public sealed class PublicPagesApiTests
         Assert.AreEqual(0.51924m, position.GetProperty("avgEntryPrice").GetDecimal());
         Assert.AreEqual(0.5m, position.GetProperty("markPrice").GetDecimal());
         Assert.AreEqual(JsonValueKind.Null, position.GetProperty("liquidationPrice").ValueKind);
+        Assert.AreEqual(10m, position.GetProperty("leverage").GetDecimal(), "10% 保证金率 → 10×");
         Assert.AreEqual(-19.24m, position.GetProperty("unrealizedPnl").GetDecimal());
         Assert.AreEqual(-38.48m, position.GetProperty("unrealizedPnlPercent").GetDecimal());
         Assert.AreEqual(0m, position.GetProperty("realizedPnl").GetDecimal());

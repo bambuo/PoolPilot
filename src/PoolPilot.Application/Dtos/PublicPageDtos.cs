@@ -148,6 +148,9 @@ public sealed record PublicLeadPositionDto
 
     public required decimal UnrealizedPnl { get; init; }
 
+    /// <summary>该仓位当前的最大杠杆倍数（1 ÷ 保证金率）；上游未给有效保证金率时为 null。</summary>
+    public required decimal? Leverage { get; init; }
+
     /// <summary>未实现盈亏 ÷ 保证金；取不到保证金率时为 null。</summary>
     public required decimal? UnrealizedPnlPercent { get; init; }
 }
