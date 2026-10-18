@@ -203,6 +203,7 @@ public sealed class ListFollowersUseCase(
                     EntryVwap = p.EntryVwap,
                     Notional = p.Notional,
                     UnrealizedPnl = p.UnrealizedPnl,
+                    InitialMarginPercent = p.InitialMarginPercent,
                     TrackingDeviationPercent = p.TrackingDeviationPercent,
                 }),
         ],

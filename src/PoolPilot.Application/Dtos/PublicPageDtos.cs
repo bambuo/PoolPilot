@@ -322,6 +322,12 @@ public sealed record PublicPositionBriefDto
     public required decimal Notional { get; init; }
 
     public required decimal UnrealizedPnl { get; init; }
+
+    /// <summary>
+    /// 源池的初始保证金率（百分数）。公开卡片据它换算标的杠杆（100 ÷ 保证金率）；
+    /// 取不到时为 null，卡片显示 — 而不是编一个杠杆。
+    /// </summary>
+    public required decimal? InitialMarginPercent { get; init; }
 }
 
 /// <summary>

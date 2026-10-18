@@ -122,6 +122,7 @@ public static class PublicPageMapper
         EntryVwap = position.EntryVwap,
         Notional = position.Notional,
         UnrealizedPnl = position.UnrealizedPnl,
+        InitialMarginPercent = position.InitialMarginPercent,
     };
 
     private static PublicPositionDto ToPosition(PaperPositionDto position) => new()

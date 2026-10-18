@@ -9,6 +9,7 @@ import { useFollowerLive, subscribeFollowerMarkets } from '@/composables/useFoll
 import { usePermission } from '@/composables/usePermission'
 import { COPY_MODES, DEFAULT_COPY_MODE, copyModeLabel, type CopyMode } from '@/domain/copyMode'
 import { formatPercent, formatNumber, formatUsd } from '@/utils/format'
+import { leverageHint, leverageText, paperLeverage } from '@/utils/leverage'
 
 /// 跟单 —— 跟单员卡片列表。
 ///
@@ -41,6 +42,9 @@ const POSITION_ROWS_VISIBLE = 2
 function positionRowCount(follower: FollowerSummary): number {
   return follower.mode === 'live' ? follower.livePositions.length : follower.positions.length
 }
+
+/// 标的杠杆的展示口径在 `utils/leverage`：工作台与公开卡片共用。
+/// 取不到时显示 — 并给出悬停原因，不拿 1× 冒充"没有杠杆"。
 
 const followers = ref<FollowerSummary[]>([])
 const leads = ref<LeadTrader[]>([])
@@ -430,8 +434,15 @@ onMounted(async () => {
                           compact
                         />
                         <span class="position-size">{{ formatNumber(position.size, 4) }}</span>
+                        <span
+                          class="position-leverage"
+                          :title="leverageHint(position.leverage)"
+                        >
+                          {{ leverageText(position.leverage) }}
+                        </span>
                       </span>
                       <span
+                        class="position-pnl"
                         :style="{
                           color:
                             position.unrealizedPnl >= 0
@@ -453,8 +464,15 @@ onMounted(async () => {
                         <DirectionMark :side="position.side" :size="12" />
                         <SymbolName :symbol="position.symbol" compact />
                         <span class="position-size">{{ formatNumber(position.size, 1) }}</span>
+                        <span
+                          class="position-leverage"
+                          :title="leverageHint(paperLeverage(position.initialMarginPercent))"
+                        >
+                          {{ leverageText(paperLeverage(position.initialMarginPercent)) }}
+                        </span>
                       </span>
                       <span
+                        class="position-pnl"
                         :style="{
                           color:
                             position.unrealizedPnl >= 0
@@ -788,16 +806,40 @@ onMounted(async () => {
   height: var(--position-row-height);
 }
 
-/* 方向三角、标的图标、数量放在同一条水平线上；
-   三者间距由 gap 统一给，不再靠文本空格（空格在不同字体下宽度不一致） */
+/* 方向标记、标的、数量、杠杆、盈亏在每一行里对齐成固定的几列。
+   标的占剩余宽度（过长省略），数量/杠杆/盈亏是固定列：
+   数量与杠杆右对齐——数值列的右边缘对齐，扫一排卡片时不用重新找起点。 */
 .position-main {
   display: flex;
   align-items: center;
+  flex: 1;
   gap: 6px;
   min-width: 0;
 }
 
+.position-main :deep(.symbol-name) {
+  flex: 1;
+  min-width: 0;
+}
+
 .position-size {
+  flex: 0 0 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 标的杠杆：与数量同属"在赌什么"的旁注，压到说明档（text-3）而不与标的、数量争同一档。
+   等宽数字 + 固定宽度让一排卡片的 ×倍 竖向对齐。 */
+.position-leverage {
+  flex: 0 0 44px;
+  color: var(--color-text-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.position-pnl {
+  flex: 0 0 72px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 

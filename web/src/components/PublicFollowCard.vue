@@ -3,6 +3,7 @@ import type { PublicFollowerSummary } from '@/api/public'
 import DirectionMark from '@/components/DirectionMark.vue'
 import SymbolName from '@/components/SymbolName.vue'
 import { formatDate, formatLocalDateTime, formatNumber, formatPercent, formatUsd } from '@/utils/format'
+import { leverageHint, leverageText, paperLeverage } from '@/utils/leverage'
 
 /// 公开跟单页的一张留言板卡片（G2）。
 ///
@@ -91,8 +92,15 @@ const POSITION_ROWS_VISIBLE = 2
                 <DirectionMark :side="position.side" :size="12" />
                 <SymbolName :symbol="position.symbol" compact />
                 <span class="position-size">{{ formatNumber(position.size, 1) }}</span>
+                <span
+                  class="position-leverage"
+                  :title="leverageHint(paperLeverage(position.initialMarginPercent))"
+                >
+                  {{ leverageText(paperLeverage(position.initialMarginPercent)) }}
+                </span>
               </span>
               <span
+                class="position-pnl"
                 :style="{
                   color:
                     position.unrealizedPnl >= 0 ? 'rgb(var(--success-6))' : 'rgb(var(--danger-6))',
@@ -261,16 +269,39 @@ const POSITION_ROWS_VISIBLE = 2
   height: var(--position-row-height);
 }
 
-/* 方向三角、标的图标、数量放在同一条水平线上；
-   三者间距由 gap 统一给，不再靠文本空格（空格在不同字体下宽度不一致） */
+/* 方向标记、标的、数量、杠杆、盈亏对齐成固定几列；标的占剩余宽度并在过长时省略。
+   数量与杠杆右对齐，数值列的右边缘才会一致。 */
 .position-main {
   display: flex;
   align-items: center;
+  flex: 1;
   gap: 6px;
   min-width: 0;
 }
 
+.position-main :deep(.symbol-name) {
+  flex: 1;
+  min-width: 0;
+}
+
 .position-size {
+  flex: 0 0 56px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 标的杠杆：与数量同属"在赌什么"的旁注，压到说明档（text-3）。
+   不可得时显示 —，原因放在 title 里；等宽数字 + 固定宽度让列对齐 */
+.position-leverage {
+  flex: 0 0 44px;
+  color: var(--color-text-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.position-pnl {
+  flex: 0 0 64px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 

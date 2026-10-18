@@ -549,6 +549,38 @@ public sealed class PublicPageUseCaseTests
         Assert.AreEqual(3, summaries[0].Positions.Count, "一行都不该在服务端被裁掉");
     }
 
+    /// <summary>
+    /// 卡片上每个持仓的**标的杠杆**来自这里的保证金率（杠杆 = 100 ÷ 保证金率）。
+    ///
+    /// 纸面把它一路带到卡片上；取不到保证金率时为 null，界面那一格就不渲染——
+    /// 不能拿 1× 冒充"没有杠杆"（那会把"不知道"画成"满仓裸奔"）。
+    /// </summary>
+    [TestMethod]
+    public async Task Summary_CarriesTheMarginPercentBehindTheCardLeverage()
+    {
+        FakeFollowers followers = new();
+        FakeLeads leads = SeededLeads();
+        FakeLedger ledger = new();
+        await followers.CreateAsync(PrivateRow(1L) with { OwnerUserId = 1L }, CancellationToken.None);
+
+        // 一笔记了保证金率（25% → 4×），一笔没记（旧流水，取不到 → 不显示）
+        ledger.Fills.Add(PaperFill(10L, 1L, 0, marketId: 29, symbol: "ENA") with { InitialMarginPercent = 25m });
+        ledger.Fills.Add(PaperFill(11L, 1L, 1, marketId: 30, symbol: "BTC"));
+
+        IReadOnlyList<FollowerSummaryDto> summaries = await new ListFollowersUseCase(
+            followers,
+            leads,
+            BuildReadUseCase(followers, leads, ledger),
+            BuildLiveAccount(followers),
+            new FakeLiveOrders(),
+            Scope()).ExecuteAsync(CancellationToken.None);
+
+        FollowerSummaryDto summary = Assert.ContainsSingle(summaries);
+
+        Assert.AreEqual(25m, summary.Positions.Single(p => p.Symbol == "ENA").InitialMarginPercent);
+        Assert.IsNull(summary.Positions.Single(p => p.Symbol == "BTC").InitialMarginPercent);
+    }
+
     [TestMethod]
     public async Task Workbench_OnlyShowsOwnedPrivateRows()
     {

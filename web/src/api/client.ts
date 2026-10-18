@@ -662,6 +662,8 @@ export interface PaperPositionBrief {
   entryVwap: number
   notional: number
   unrealizedPnl: number
+  /** 源池初始保证金率（百分数）；卡片据它换算标的杠杆。取不到时为 null。 */
+  initialMarginPercent: number | null
   trackingDeviationPercent: number
 }
 

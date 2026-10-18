@@ -357,6 +357,12 @@ public sealed record PaperPositionBriefDto
 
     public required decimal UnrealizedPnl { get; init; }
 
+    /// <summary>
+    /// 源池的初始保证金率（百分数，25 表示 25%）。卡片据它换算**标的杠杆**（杠杆 = 100 ÷ 保证金率）；
+    /// 取不到时为 null——那一格不显示杠杆，不拿 1× 冒充"没有杠杆"。
+    /// </summary>
+    public required decimal? InitialMarginPercent { get; init; }
+
     /// <summary>跟踪偏差占目标的比例（百分数）。绝对值大说明颗粒度损失明显。</summary>
     public required decimal TrackingDeviationPercent { get; init; }
 }

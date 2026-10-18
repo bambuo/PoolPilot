@@ -1212,6 +1212,8 @@ public sealed class PublicPagesApiTests
                 .Single(p => p.GetProperty("marketId").GetInt32() == 29);
 
             Assert.AreEqual(5m, position.GetProperty("unrealizedPnl").GetDecimal());
+            Assert.AreEqual(10m, position.GetProperty("initialMarginPercent").GetDecimal(),
+                "卡片杠杆依赖的保证金率必须随行情补丁保留");
             Assert.AreEqual(5m, follower.GetProperty("unrealizedPnl").GetDecimal());
             Assert.AreEqual(504.95m, follower.GetProperty("equity").GetDecimal());
         }
